@@ -165,7 +165,9 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
-  const url = req.url === '/' ? '/apex-humanoid.html' : req.url.split('?')[0];
+  /* root serves whichever page file is present */
+  const home = fs.existsSync(path.join(ROOT, 'index.html')) ? '/index.html' : '/apex-humanoid.html';
+  const url = req.url === '/' ? home : req.url.split('?')[0];
 
   /* never serve dotfiles, secrets, or the server's own source */
   const rel = decodeURIComponent(url);
