@@ -1,0 +1,17 @@
+services:
+  - type: web
+    name: apex-humanoid
+    runtime: node
+    plan: free
+    buildCommand: npm install --omit=dev
+    startCommand: node server.js
+    envVars:
+      - key: ELEVENLABS_API_KEY
+        sync: false          # paste it in the Render dashboard, never in git
+      - key: ELEVENLABS_MODEL
+        value: eleven_v4_turbo
+      - key: ELEVENLABS_VOICE_ID
+        value: JBFqnCBsd6RMkjVDRZzb
+      # optional brain
+      - key: OPENAI_API_KEY
+        sync: false
