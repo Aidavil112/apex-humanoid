@@ -1,0 +1,1370 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
+<meta name="apple-mobile-web-app-title" content="Humanoid">
+<meta name="theme-color" content="#04070b">
+<meta name="format-detection" content="telephone=no">
+<title>APEX Humanoid — rebuilt</title>
+<style>
+  :root{
+    --cyan:#4fd2ff; --cyan-dim:#1c4a63; --ink:#04070b;
+    --mono:ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;
+  }
+  *{box-sizing:border-box}
+  html,body{height:100%;overscroll-behavior:none;-webkit-tap-highlight-color:transparent}
+  body{
+    margin:0;background:var(--ink);color:#cfe4f5;font-family:var(--mono);
+    overflow:hidden;-webkit-font-smoothing:antialiased;
+  }
+  #stage{position:fixed;inset:0}
+  canvas{display:block;width:100%;height:100%}
+  /* ambient vignette + faint scan */
+  .veil{position:fixed;inset:0;pointer-events:none;
+    background:
+      radial-gradient(120% 85% at 50% 42%, transparent 38%, rgba(0,0,0,.55) 78%, #000 100%),
+      repeating-linear-gradient(to bottom, rgba(120,220,255,.028) 0 1px, transparent 1px 3px);
+    mix-blend-mode:normal;}
+  .hud{position:fixed;inset:0;pointer-events:none}
+  .hud > *{pointer-events:auto}
+
+  .brand{position:absolute;top:26px;left:28px;font-size:10.5px;letter-spacing:.26em;
+    color:#5d90ae;text-transform:uppercase;line-height:1.9}
+  .brand b{color:#bfe6ff;letter-spacing:.3em;display:block;font-weight:600}
+  .brand span{color:#2d556d}
+
+  .status{position:absolute;top:28px;right:30px;text-align:right;font-size:10px;
+    letter-spacing:.24em;color:#5d90ae;text-transform:uppercase}
+  .status b{color:var(--cyan);font-weight:600;letter-spacing:.2em}
+  .status .dot{display:inline-block;width:5px;height:5px;border-radius:50%;
+    background:var(--cyan);margin-left:7px;vertical-align:middle;
+    box-shadow:0 0 8px var(--cyan);animation:pulse 2.4s ease-in-out infinite}
+  @keyframes pulse{0%,100%{opacity:.35}50%{opacity:1}}
+
+  .dock{position:absolute;left:50%;bottom:calc(30px + env(safe-area-inset-bottom));transform:translateX(-50%);
+    display:flex;gap:7px;align-items:center;flex-wrap:wrap;justify-content:center;
+    padding:7px;border-radius:12px;
+    background:rgba(6,14,21,.62);border:1px solid rgba(79,210,255,.14);
+    backdrop-filter:blur(9px);-webkit-backdrop-filter:blur(9px);
+    box-shadow:0 14px 40px -18px rgba(0,0,0,.9)}
+  .dock button{
+    appearance:none;cursor:pointer;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.13em;text-transform:uppercase;color:#7fa8c2;
+    background:transparent;border:1px solid transparent;border-radius:7px;
+    padding:7px 11px;transition:.18s ease;white-space:nowrap
+  }
+  .dock button:hover{color:#d7f1ff;background:rgba(79,210,255,.07)}
+  .dock button[aria-pressed="true"]{
+    color:#0a1620;background:var(--cyan);border-color:var(--cyan);
+    box-shadow:0 0 18px -4px rgba(79,210,255,.75);font-weight:600}
+  .dock .sep{width:1px;height:16px;background:rgba(79,210,255,.16);margin:0 3px}
+  .dock .ghost{color:#5d7f96}
+  .dock .ghost[aria-pressed="true"]{background:rgba(79,210,255,.14);color:#bfe6ff;
+    border-color:rgba(79,210,255,.4);box-shadow:none;font-weight:500}
+
+  .hint{position:absolute;left:50%;bottom:96px;transform:translateX(-50%);
+    font-size:10px;letter-spacing:.2em;color:#38627a;text-transform:uppercase;
+    text-align:center;transition:opacity .8s ease;pointer-events:none}
+  .hint.gone{opacity:0}
+
+  .about{position:absolute;left:28px;bottom:30px;font-size:10px;line-height:1.8;
+    letter-spacing:.08em;color:#2f566d;max-width:230px}
+  .about b{color:#4d86a4;font-weight:500}
+
+  .exit{position:absolute;top:22px;left:28px;display:none}
+
+  /* intro gate */
+  #gate{position:fixed;inset:0;display:grid;place-content:center;gap:0;
+    background:radial-gradient(60% 60% at 50% 50%, #060d14 0%, #03060a 70%, #000 100%);
+    z-index:20;text-align:center;transition:opacity .9s ease}
+  #gate.out{opacity:0;pointer-events:none}
+  #gate h1{margin:0;font-size:15px;letter-spacing:.52em;color:#bfe6ff;font-weight:500;
+    text-indent:.52em}
+  #gate p{margin:14px 0 0;font-size:10.5px;letter-spacing:.16em;color:#4a7c98;
+    text-transform:lowercase}
+  #gate .enter{margin:34px auto 0;padding:13px 30px;font-family:var(--mono);
+    font-size:11px;letter-spacing:.34em;color:#9fd8f5;text-indent:.34em;
+    background:rgba(6,20,30,.7);border:1px solid rgba(79,210,255,.35);
+    border-radius:9px;cursor:pointer;transition:.25s ease}
+  #gate .enter:hover{color:#eafaff;border-color:rgba(79,210,255,.9);
+    box-shadow:0 0 34px -8px rgba(79,210,255,.6);background:rgba(10,34,50,.85)}
+  #gate small{display:block;margin-top:20px;font-size:9.5px;letter-spacing:.14em;color:#2c4f63}
+
+  @media (max-width:640px){
+    .brand{font-size:9px;top:calc(14px + env(safe-area-inset-top));left:16px;letter-spacing:.18em}
+    .brand span{display:none}
+    .status{font-size:9px;top:calc(16px + env(safe-area-inset-top));right:16px;letter-spacing:.16em}
+    .about{display:none}
+    .hint{display:none}
+
+    /* the dock becomes a slim two-row tray that never covers the face */
+    .dock{
+      left:12px; right:12px; bottom:calc(12px + env(safe-area-inset-bottom));
+      transform:none; width:auto;
+      display:grid; grid-template-columns:repeat(4, 1fr);
+      gap:5px; padding:6px; border-radius:14px;
+    }
+    .dock button{
+      font-size:9px; padding:9px 2px; letter-spacing:.06em;
+      border-radius:9px; min-height:34px;
+    }
+    .dock .sep{display:none}
+    /* row 1: moods · row 2: toggles */
+    #micBtn, #replayBtn, #soundBtn, #gestureBtn, #fxBtn, #bgBtn, #themeBtn{ font-size:8.5px; }
+    #gestureView{left:14px; bottom:calc(120px + env(safe-area-inset-bottom)); width:88px; height:66px}
+    #toast{bottom:calc(126px + env(safe-area-inset-bottom)); font-size:9px; max-width:88vw}
+  }
+  /* a soft floor so the tray always sits on darkness, even over the terrain */
+  .floor{position:fixed;left:0;right:0;bottom:0;height:min(38vh,320px);pointer-events:none;
+    background:linear-gradient(to top, rgba(2,5,8,.92) 0%, rgba(2,5,8,.72) 38%, transparent 100%);}
+  @media (min-width:641px){ .floor{display:none} }
+</style>
+</head>
+<body>
+
+<div id="stage"><canvas id="cv"></canvas></div>
+<div class="veil"></div>
+<div class="floor"></div>
+
+<div class="hud">
+  <div class="brand"><b id="brandName">APEX HUMANOID</b><span id="brandTag">rebuilt · raw webgl2</span></div>
+
+  <div class="status">
+    status: <b id="moodLabel">idle</b><span class="dot"></span><br>
+    <span id="fps" style="color:#2d556d">— fps</span>
+  </div>
+
+  <div class="hint" id="hint">move pointer — head follows · 1–4 mood · t theme · g gesture · f sfx · b bg</div>
+
+  <canvas id="gestureView" width="120" height="90" style="position:absolute;left:26px;bottom:172px;
+    width:120px;height:90px;border-radius:8px;border:1px solid rgba(79,210,255,.28);
+    display:none;opacity:.85;background:#04090e"></canvas>
+  <div id="toast" style="position:absolute;left:50%;bottom:120px;transform:translateX(-50%);
+    background:rgba(8,20,30,.92);border:1px solid rgba(79,210,255,.28);border-radius:9px;
+    padding:9px 16px;font-size:10.5px;letter-spacing:.12em;color:#a9d8f0;text-transform:uppercase;
+    opacity:0;transition:opacity .35s ease;pointer-events:none;max-width:80vw;text-align:center"></div>
+
+  <div class="about">
+    <b>built from scratch</b> — no three.js, no CDN, no trackers.<br>
+    300k points sampled procedurally.<br><br>
+    <b>voice</b> — set tts:'server' + ttsUrl in CONFIG.
+  </div>
+
+  <div class="dock" id="dock">
+    <button data-mood="idle" aria-pressed="true">idle</button>
+    <button data-mood="listening" aria-pressed="false">listening</button>
+    <button data-mood="thinking" aria-pressed="false">thinking</button>
+    <button data-mood="speaking" aria-pressed="false">speaking</button>
+    <span class="sep"></span>
+    <button class="ghost" id="micBtn" aria-pressed="false">mic</button>
+    <button class="ghost" id="replayBtn" aria-pressed="false">replay</button>
+    <button class="ghost" id="soundBtn" aria-pressed="false">sound</button>
+    <span class="sep"></span>
+    <button class="ghost" id="gestureBtn" aria-pressed="false">gesture</button>
+    <button class="ghost" id="fxBtn" aria-pressed="true">♪ fx</button>
+    <button class="ghost" id="bgBtn" aria-pressed="true">◧ bg</button>
+    <button class="ghost" id="themeBtn">◐ cyan</button>
+  </div>
+</div>
+
+<div id="gate">
+  <h1 id="gateName">APEX HUMANOID</h1>
+  <p>a figure of light that assembles itself</p>
+  <button class="enter" id="enterBtn">ENTER</button>
+  <small id="gateNote">click begins assembly</small>
+</div>
+
+<script>
+"use strict";
+/* ============================================================================
+   APEX HUMANOID — clean-room rebuild
+   * zero dependencies: raw WebGL2, procedural point cloud, hand-written shaders
+   * everything (geometry, shading, moods, audio synth) generated at runtime
+   * visual only — no AI is wired up. hook point marked WIRE YOUR BRAIN below.
+   ========================================================================== */
+
+const canvas = document.getElementById('cv');
+const gl = canvas.getContext('webgl2', { antialias: true, alpha: false, powerPreference: 'high-performance' });
+if (!gl) {
+  document.getElementById('gateNote').textContent = 'this device has no webgl2 — sorry';
+  throw new Error('no webgl2');
+}
+
+/* ------------------------------------------------------------------ rng --- */
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;let t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+const rnd = mulberry32(20261019);
+const TAU = Math.PI * 2;
+function gauss(){ let u=0,v=0; while(!u)u=rnd(); while(!v)v=rnd();
+  return Math.sqrt(-2*Math.log(u))*Math.cos(TAU*v); }
+const clamp=(x,a,b)=>x<a?a:x>b?b:x;
+const smoothstep=(a,b,x)=>{const t=clamp((x-a)/(b-a),0,1);return t*t*(3-2*t)};
+
+/* --------------------------------------------------------- point cloud ---- */
+const P = [], N = [], B = [], S = [], T = [], W = [], Z = [];
+const TYPE_SHELL = 0, TYPE_CORE = 1, TYPE_HALO = 2, TYPE_HAZE = 3;
+
+function push(x,y,z, nx,ny,nz, band, type, weight, size){
+  P.push(x,y,z); N.push(nx,ny,nz); B.push(band); S.push(rnd());
+  T.push(type); W.push(weight); Z.push(size);
+}
+
+/* profile helper: linear keyframe interpolation, y descending */
+function prof(y, keys){
+  for (let i=0;i<keys.length-1;i++){
+    const a = keys[i], b = keys[i+1];
+    if (y <= a[0] && y >= b[0]){
+      const t = (a[0]-y)/(a[0]-b[0] || 1);
+      return a[1] + (b[1]-a[1])*smoothstep(0,1,t);
+    }
+  }
+  return y > keys[0][0] ? keys[0][1] : keys[keys.length-1][1];
+}
+/* half-width / half-depth of the torso; y runs 0.92 (neck base) → -1.05 (cut) */
+const W_KEYS = [[0.92,0.108],[0.84,0.140],[0.74,0.205],[0.62,0.300],[0.50,0.375],
+                [0.36,0.410],[0.10,0.380],[-0.25,0.338],[-0.70,0.392],[-1.05,0.448]];
+const D_KEYS = [[0.92,0.098],[0.84,0.112],[0.74,0.140],[0.62,0.176],[0.50,0.196],
+                [0.36,0.202],[0.10,0.194],[-0.25,0.174],[-0.70,0.188],[-1.05,0.210]];
+const RING = TAU / 0.031;
+
+/* ---- head: tapered ellipsoid, ring-shaded ---- */
+const HEAD = { cx:0, cy:1.195, cz:0.015, rx:0.250, ry:0.318, rz:0.272 };
+for (let i=0;i<104000;i++){
+  const d=[gauss(),gauss(),gauss()]; const l=Math.hypot(d[0],d[1],d[2]);
+  d[0]/=l; d[1]/=l; d[2]/=l;
+  let x = HEAD.rx*d[0], y = HEAD.ry*d[1], z = HEAD.rz*d[2];
+  if (d[1] < 0){                                  // jaw: narrow and push forward
+    const k = clamp(-d[1],0,1);
+    const taper = 0.42*Math.pow(k,1.30);
+    x *= 1 - taper;
+    z *= 1 - taper*0.62;
+    y *= 1 - 0.075*Math.pow(k,1.1);
+    z += 0.050*Math.pow(k,2.2);                    // chin comes forward
+  } else {                                        // cranium: slightly taller/boxier
+    y *= 1 + 0.09*Math.pow(d[1],1.7);
+  }
+  if (d[2] < 0) z *= 0.93;                        // flatter back of head
+  // brow + cheek structure
+  const brow = Math.exp(-Math.pow((y-0.10)/0.055,2)) * Math.exp(-Math.pow(x/0.20,2));
+  z += brow * 0.022 * (d[2] > 0 ? 1 : 0.2);
+  const cheek = Math.exp(-Math.pow((y+0.06)/0.10,2)) * Math.pow(Math.abs(x)/0.26,2);
+  z += cheek * 0.016 * (d[2] > 0 ? 1 : 0.2);
+  x += HEAD.cx + 0; z += HEAD.cz; y += HEAD.cy;
+  const nx=d[0], ny=d[1], nz=d[2];
+  const band = y*RING;
+  push(x,y,z, nx,ny,nz, band, TYPE_SHELL, smoothstep(0.90,1.02,y), 0.0033);
+}
+
+/* ---- neck + trapezius ---- */
+for (let i=0;i<26000;i++){
+  const y = 0.66 + rnd()*0.30;
+  const r = prof(y, [[0.96,0.093],[0.88,0.098],[0.78,0.120],[0.66,0.170]]);
+  const a = rnd()*TAU;
+  const x = Math.cos(a)*r, z = Math.sin(a)*r*0.90;
+  push(x,y,z, Math.cos(a),0,Math.sin(a), y*RING, TYPE_SHELL,
+       smoothstep(0.66,0.96,y)*0.75, 0.0030);
+}
+
+/* ---- torso / shoulders ---- */
+for (let i=0;i<128000;i++){
+  const u = Math.pow(rnd(), 0.85);
+  let y = 0.92 - u*1.97;
+  const a = rnd()*TAU;
+  const c = Math.cos(a), sg = Math.sin(a);
+  const pw = 0.94;                                  // near-elliptical cross-section
+  const hw = prof(y, W_KEYS), hd = prof(y, D_KEYS);
+  let x = hw*Math.sign(c)*Math.pow(Math.abs(c), pw);
+  let z = hd*Math.sign(sg)*Math.pow(Math.abs(sg), pw);
+  // shoulder cap: lift the outer edge so it reads as a deltoid, not a cone
+  const delt = Math.exp(-Math.pow((y-0.52)/0.15,2)) * Math.pow(Math.abs(x)/0.42, 2.4);
+  y += delt*0.022;
+  x *= 1 - 0.16*Math.exp(-Math.pow((y+0.10)/0.55,2));   // sides pull in below the shoulders
+  // sternum hollow
+  const stern = Math.exp(-Math.pow(x/0.085,2)) * Math.exp(-Math.pow((y-0.30)/0.22,2));
+  z -= stern*0.028;
+  const nx=c, nz=sg;
+  const band = y*RING*0.95;
+  push(x,y,z, nx,0,nz, band, TYPE_SHELL,
+       smoothstep(0.74,0.94,y)*0.42, 0.0033);
+}
+
+/* ---- core: a dim ember inside the head, plus a plume down the throat ---- */
+for (let i=0;i<26000;i++){
+  const d=[gauss(),gauss(),gauss()]; const l=Math.hypot(d[0],d[1],d[2]);
+  d[0]/=l; d[1]/=l; d[2]/=l;
+  const r = Math.cbrt(rnd())*0.185;
+  push(HEAD.cx + d[0]*r*0.92,
+       HEAD.cy - 0.02 + d[1]*r*1.15,
+       HEAD.cz - 0.03 + d[2]*r*0.55,
+       d[0],d[1],d[2], 0, TYPE_CORE, 0.96, 0.0028);
+}
+for (const [ox, amp, phase, n] of [[0,0.008,0,9000],[0.020,0.006,2.1,5000],[-0.020,0.006,4.2,5000]]){
+  for (let i=0;i<n;i++){
+    const t = rnd();
+    const y = 1.03 - t*0.46;
+    const x = ox + Math.sin(t*4.0+phase)*amp*(0.4+t) + gauss()*0.011;
+    const z = 0.095 + t*0.040 + gauss()*0.010;
+    push(x,y,z, 0,0,1, 0, TYPE_CORE, 0.55, 0.0022);
+  }
+}
+
+/* ---- halo: fine dust lifting off the crown ---- */
+for (let i=0;i<26000;i++){
+  const ang = rnd()*TAU;
+  const up  = Math.pow(rnd(), 0.65);
+  const rad = 0.12 + 0.34*Math.pow(rnd(),0.8);
+  const x = Math.cos(ang)*rad*(1-up*0.55);
+  const z = Math.sin(ang)*rad*0.95*(1-up*0.55);
+  const y = HEAD.cy + 0.14 + up*0.44 + gauss()*0.02;
+  push(x, y, HEAD.cz+z, 0,1,0, 0, TYPE_HALO, 0.5, 0.0020);
+}
+
+/* ---- haze: a few fat, very dim sprites = cheap bloom ---- */
+function haze(cx,cy,cz,rx,ry,rz,n,size){
+  for (let i=0;i<n;i++){
+    const d=[gauss(),gauss(),gauss()];
+    push(cx+d[0]*rx, cy+d[1]*ry, cz+d[2]*rz, 0,0,1, 0, TYPE_HAZE, 0, size);
+  }
+}
+haze(0, 1.17, 0.02, 0.12, 0.13, 0.02, 45, 0.085);  // face glow
+haze(0, 1.56, 0.00, 0.20, 0.12, 0.02, 26, 0.070);  // crown haze
+haze(0, 0.72, 0.06, 0.06, 0.19, 0.01, 24, 0.065);  // throat plume
+
+const count = P.length/3;
+const aPos = new Float32Array(P), aNrm = new Float32Array(N), aBand = new Float32Array(B),
+      aSeed = new Float32Array(S), aType = new Float32Array(T),
+      aWeight = new Float32Array(W), aSize = new Float32Array(Z);
+
+/* ------------------------------------------------------------- shaders ---- */
+const VS = `#version 300 es
+precision highp float;
+layout(location=0) in vec3 aPos;
+layout(location=1) in vec3 aNrm;
+layout(location=2) in float aBand;
+layout(location=3) in float aSeed;
+layout(location=4) in float aType;
+layout(location=5) in float aWeight;
+layout(location=6) in float aSize;
+
+uniform mat4 uViewProj;
+uniform float uTime, uYaw, uPitch, uCoreAmt, uAssemble, uFocal, uDpr, uDensity;
+uniform vec3 uCoreCol;
+uniform vec3 uAccent;
+out vec3 vCol;
+out float vAlpha;
+
+mat3 rotY(float a){ float c=cos(a),s=sin(a); return mat3(c,0.,-s, 0.,1.,0., s,0.,c); }
+mat3 rotX(float a){ float c=cos(a),s=sin(a); return mat3(1.,0.,0., 0.,c,s, 0.,-s,c); }
+
+void main(){
+  float t = uTime;
+  if (aSeed > uDensity) {                       // density LOD — thin the cloud, keep the shape
+    gl_Position = vec4(2.0,2.0,2.0,1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vAlpha = 0.0; return;
+  }
+  vec3 p = aPos;
+  vec3 n = aNrm;
+
+  /* breathing — subtle expansion keyed to body height */
+  p *= 1.0 + 0.007*sin(t*1.15 + p.y*1.6);
+
+  /* head / neck follow the pointer, weighted so the bust stays planted */
+  float w = aWeight;
+  mat3 R = rotY(uYaw*w) * rotX(uPitch*w);
+  vec3 pivot = vec3(0.0, 0.95, 0.0);
+  p = R*(p-pivot) + pivot;
+  n = R*n;
+
+  /* assembly: points fly in from their outward normal, staggered per point */
+  float asmPhase = clamp(uAssemble*1.65 - aSeed*0.65, 0.0, 1.0);
+  float ease = 1.0 - pow(1.0-asmPhase, 3.0);
+  p += n * (1.0-ease) * (0.55 + aSeed*0.9);
+  float birthGlow = (1.0-ease) * 2.2;
+
+  /* ---- shading ---- */
+  float ring = 0.5 + 0.5*sin(aBand + t*0.28);
+  float thin = pow(ring, 26.0);                 // thin bright latitude lines
+  float fill = 0.19 + 0.34*smoothstep(-0.30, 0.95, n.z);
+  float rim  = pow(1.0 - abs(n.z), 3.4);
+  float br = fill + 0.90*thin + 0.95*rim;
+  br *= 0.86 + 0.20*sin(t*1.9 + aSeed*61.0);
+  vec3 cyan = uAccent;
+  vec3 col = cyan * br;
+
+  /* core light bleeding through the shell */
+  float dc = length((p - vec3(0.0, 1.19, 0.05)) * vec3(1.0, 0.95, 0.55));
+  float glow = exp(-dc*dc*9.0) * uCoreAmt;
+  col += uCoreCol * glow * 0.26;
+  /* warm light spilling down the throat and sternum */
+  float warm = exp(-pow(p.x/0.19,2.0)) * exp(-pow((p.y-0.62)/0.46,2.0)) * smoothstep(-0.2,0.9,n.z);
+  col += uCoreCol * warm * (0.16 + 0.20*uCoreAmt);
+
+  float size = aSize;
+
+  if (aType > 2.5){                          /* HAZE — big dim bloom sprites */
+    float breathe = 0.7 + 0.3*sin(t*1.3 + aSeed*7.0);
+    col = uCoreCol * 0.008 * breathe * (0.5 + uCoreAmt*0.6);
+  } else if (aType > 0.5 && aType < 1.5){    /* CORE particles */
+    float pulse = 0.5 + 0.5*sin(t*2.1 + aSeed*11.0);
+    float fall = 0.45 + 0.55*(1.0 - smoothstep(0.05, 0.20, length(p - vec3(0.0, 1.18, -0.02))));
+    col = uCoreCol * (0.10 + 0.30*pulse) * (0.35 + 0.65*uCoreAmt) * fall;
+    size *= 1.55;
+  } else if (aType > 1.5){                  /* HALO */
+    float tw = pow(0.5+0.5*sin(t*1.4 + aSeed*90.0), 6.0);
+    col = cyan * (0.05 + 0.85*tw);
+  } else if (n.z < -0.08) {
+    /* cull the back half of the shell so the figure reads solid */
+    gl_Position = vec4(2.0,2.0,2.0,1.0); gl_PointSize = 0.0; vCol = vec3(0.0); vAlpha = 0.0; return;
+  }
+
+  col += uCoreCol * birthGlow * 0.35;
+
+  vec4 mv = uViewProj * vec4(p, 1.0);
+  gl_Position = mv;
+  float dist = max(0.5, 3.1 - p.z*0.28);
+  float cap = (aType > 2.5) ? 220.0 : 26.0;
+  gl_PointSize = clamp(size * uFocal / dist * uDpr, 1.0, cap);
+
+  vCol = col;
+  vAlpha = aType > 0.5 ? 1.0 : (0.55 + 0.45*thin);
+}`;
+
+const FS = `#version 300 es
+precision highp float;
+in vec3 vCol;
+in float vAlpha;
+out vec4 fragColor;
+void main(){
+  vec2 d = gl_PointCoord - 0.5;
+  float r = dot(d,d);
+  if (r > 0.25) discard;
+  float a = smoothstep(0.25, 0.02, r);
+  a *= a * a;                                  /* softer falloff = no visible discs */
+  fragColor = vec4(vCol * a * vAlpha, 1.0);
+}`;
+
+function compile(type, src){
+  const sh = gl.createShader(type);
+  gl.shaderSource(sh, src); gl.compileShader(sh);
+  if (!gl.getShaderParameter(sh, gl.COMPILE_STATUS)) throw new Error(gl.getShaderInfoLog(sh));
+  return sh;
+}
+const prog = gl.createProgram();
+gl.attachShader(prog, compile(gl.VERTEX_SHADER, VS));
+gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, FS));
+gl.linkProgram(prog);
+if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+gl.useProgram(prog);
+
+function buffer(loc, data, size){
+  const b = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, b);
+  gl.bufferData(gl.ARRAY_BUFFER, data, gl.STATIC_DRAW);
+  gl.enableVertexAttribArray(loc);
+  gl.vertexAttribPointer(loc, size, gl.FLOAT, false, 0, 0);
+}
+buffer(0, aPos, 3); buffer(1, aNrm, 3); buffer(2, aBand, 1);
+buffer(3, aSeed, 1); buffer(4, aType, 1); buffer(5, aWeight, 1); buffer(6, aSize, 1);
+
+const U = {};
+['uViewProj','uTime','uYaw','uPitch','uCoreAmt','uAssemble','uFocal','uDpr','uDensity','uCoreCol','uAccent']
+  .forEach(k => U[k] = gl.getUniformLocation(prog, k));
+
+
+/* ======================= ALIVE BACKGROUND (terrain) =======================
+   A second point cloud: glowing topographic ridges behind the figure.
+   Contour bands + crest glow, valley in the middle, melts into black.
+   ========================================================================= */
+const BG = (() => {
+  const gx = 260, gz = 120;
+  const gPos = [], gSeed = [];
+  for (let j = 0; j < gz; j++){
+    for (let i = 0; i < gx; i++){
+      const u = (i + 0.5) / gx, v = (j + 0.5) / gz;
+      const x = (u * 2 - 1) * 3.6;
+      const z = -1.0 - v * 3.4;
+      gPos.push(x, z);
+      gSeed.push(Math.random());
+    }
+  }
+  const n = gSeed.length;
+
+  const vs = `#version 300 es
+  precision highp float;
+  layout(location=0) in vec2 aXZ;
+  layout(location=1) in float aSeed;
+  uniform mat4 uViewProj;
+  uniform float uTime, uAmt, uFocal, uDpr;
+  uniform vec3 uAccent, uCoreCol;
+  out vec3 vCol;
+  out float vA;
+
+  float ridge(vec2 p, float t){
+    float h = 0.0;
+    h += sin(p.x*1.10 + t*0.09) * cos(p.y*0.85 - t*0.06) * 0.55;
+    h += sin(p.x*2.30 - t*0.13 + 1.7) * 0.28;
+    h += sin(p.x*4.60 + t*0.19 + 0.9) * cos(p.y*1.9) * 0.14;
+    h += sin(p.y*3.20 - t*0.16 + 2.4) * 0.18;
+    h += sin((p.x*0.9 + p.y*0.7)*5.1 + t*0.27) * 0.07;
+    return h;
+  }
+  void main(){
+    vec2 p = aXZ;
+    float t = uTime;
+    float h = ridge(p, t);
+
+    /* valley: keep the centre clear for the figure */
+    float side = smoothstep(0.30, 1.30, abs(p.x));
+    h *= mix(0.10, 1.0, side);
+
+    vec3 pos = vec3(p.x, h * 0.58 - 0.92, p.y);
+    vec4 mv = uViewProj * vec4(pos, 1.0);
+    gl_Position = mv;
+
+    float dist = max(0.5, 2.6 - p.y * 0.45);
+    gl_PointSize = clamp(0.016 * uFocal / dist * uDpr, 1.0, 7.0);
+
+    /* topographic contour bands + crest highlight */
+    float band = pow(0.5 + 0.5*sin(h * 12.0 - t*0.45), 6.0);
+    float crest = smoothstep(0.45, 1.10, h);
+    float tw = pow(0.5 + 0.5*sin(t*1.5 + aSeed*93.0), 8.0);
+
+    vec3 col = mix(uAccent, uCoreCol, crest*0.85);
+    col *= 0.30 + 0.50*band + 0.55*crest + 0.30*tw;
+    col *= 0.55 + 0.45*uAmt;
+
+    /* depth + edge falloff so it reads as atmosphere, not a wall */
+    float far  = smoothstep(-3.8, -1.6, p.y);
+    float edge = smoothstep(3.6, 1.9, abs(p.x));
+    float nearFade = 1.0 - smoothstep(-1.4, -0.5, p.y) * 0.75;
+    vCol = col * (0.18 + 0.85*far) * (0.18 + 0.95*edge) * nearFade;
+    vA = 0.5 + 0.5*band;
+  }`;
+
+  const fs = `#version 300 es
+  precision highp float;
+  in vec3 vCol; in float vA; out vec4 o;
+  void main(){
+    vec2 d = gl_PointCoord - 0.5;
+    float r = dot(d,d);
+    if (r > 0.25) discard;
+    float a = smoothstep(0.25, 0.02, r); a *= a;
+    o = vec4(vCol * a * vA, 1.0);
+  }`;
+
+  const prog = gl.createProgram();
+  gl.attachShader(prog, compile(gl.VERTEX_SHADER, vs));
+  gl.attachShader(prog, compile(gl.FRAGMENT_SHADER, fs));
+  gl.linkProgram(prog);
+  if (!gl.getProgramParameter(prog, gl.LINK_STATUS)) throw new Error(gl.getProgramInfoLog(prog));
+
+  const posBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gPos), gl.STATIC_DRAW);
+  const seedBuf = gl.createBuffer();
+  gl.bindBuffer(gl.ARRAY_BUFFER, seedBuf);
+  gl.bufferData(gl.ARRAY_BUFFER, new Float32Array(gSeed), gl.STATIC_DRAW);
+
+  const vao = gl.createVertexArray();
+  gl.bindVertexArray(vao);
+  gl.bindBuffer(gl.ARRAY_BUFFER, posBuf);
+  gl.enableVertexAttribArray(0);
+  gl.vertexAttribPointer(0, 2, gl.FLOAT, false, 0, 0);
+  gl.bindBuffer(gl.ARRAY_BUFFER, seedBuf);
+  gl.enableVertexAttribArray(1);
+  gl.vertexAttribPointer(1, 1, gl.FLOAT, false, 0, 0);
+  gl.bindVertexArray(null);
+
+  const U = {};
+  ['uViewProj','uTime','uAmt','uFocal','uDpr','uAccent','uCoreCol'].forEach(k => U[k] = gl.getUniformLocation(prog, k));
+  return { prog, vao, n, U, on:true };
+})();
+
+/* ------------------------------------------------------------ matrices --- */
+function perspective(fovy, aspect, near, far){
+  const f = 1/Math.tan(fovy/2), nf = 1/(near-far);
+  return new Float32Array([f/aspect,0,0,0, 0,f,0,0, 0,0,(far+near)*nf,-1, 0,0,2*far*near*nf,0]);
+}
+function lookAt(eye, center, up){
+  let z=[eye[0]-center[0],eye[1]-center[1],eye[2]-center[2]];
+  let l=Math.hypot(...z); z=z.map(v=>v/l);
+  let x=[up[1]*z[2]-up[2]*z[1], up[2]*z[0]-up[0]*z[2], up[0]*z[1]-up[1]*z[0]];
+  l=Math.hypot(...x)||1; x=x.map(v=>v/l);
+  const y=[z[1]*x[2]-z[2]*x[1], z[2]*x[0]-z[0]*x[2], z[0]*x[1]-z[1]*x[0]];
+  return new Float32Array([
+    x[0],y[0],z[0],0, x[1],y[1],z[1],0, x[2],y[2],z[2],0,
+    -(x[0]*eye[0]+x[1]*eye[1]+x[2]*eye[2]),
+    -(y[0]*eye[0]+y[1]*eye[1]+y[2]*eye[2]),
+    -(z[0]*eye[0]+z[1]*eye[1]+z[2]*eye[2]), 1
+  ]);
+}
+function mul(a,b){
+  const o=new Float32Array(16);
+  for(let i=0;i<4;i++)for(let j=0;j<4;j++){let s=0;for(let k=0;k<4;k++)s+=a[k*4+j]*b[i*4+k];o[i*4+j]=s;}
+  return o;
+}
+
+/* ============================ BRANDING / CONFIG ============================ */
+/* change these five lines and the whole piece re-skins. nothing else needed. */
+const CONFIG = {
+  name:    'APEX HUMANOID',
+  tagline: 'rebuilt · raw webgl2',
+  brain:   'local',          // 'local' | 'endpoint'  (endpoint = your own server)
+  brainUrl:'',               // e.g. 'http://localhost:8787/chat' → { text }
+  tts:     'auto',           // 'auto' = use this page's server if it has one · 'browser' · 'server'
+  ttsUrl:  '',               // blank = same-origin '/tts' (server.js serves the page too)
+  voiceId: '',               // blank = server default voice
+  modelId: 'eleven_v4_turbo',// ~100ms · best for agents · 90+ languages
+  wakeMood:'listening'
+};
+const THEMES = [
+  { id:'cyan',   name:'cyan',   accent:[0.24,0.74,1.00], core:[1.00,0.52,0.10] },
+  { id:'violet', name:'violet', accent:[0.62,0.46,1.00], core:[1.00,0.36,0.62] },
+  { id:'mint',   name:'mint',   accent:[0.30,1.00,0.72], core:[1.00,0.72,0.16] },
+  { id:'amber',  name:'amber',  accent:[1.00,0.72,0.30], core:[1.00,0.30,0.18] }
+];
+let themeIdx = 0;
+const accentCur = [...THEMES[0].accent];
+
+/* ---------------------------------------------------------------- state --- */
+const MOODS = {
+  idle:      { core:[1.00,0.52,0.10], amt:0.85, label:'idle' },
+  listening: { core:[0.30,0.82,1.00], amt:1.25, label:'listening' },
+  thinking:  { core:[1.00,0.70,0.16], amt:1.55, label:'thinking' },
+  speaking:  { core:[1.00,0.42,0.22], amt:1.45, label:'speaking' }
+};
+let mood = 'idle';
+let yaw = 0, pitch = 0, targetYaw = 0, targetPitch = 0;
+let typing = 0;                      // 0 = still, 1 = user typing (mouth-ish jitter)
+let started = false, assemble = 0;
+let cur = [...MOODS.idle.core], curAmt = MOODS.idle.amt;
+
+const moodLabel = document.getElementById('moodLabel');
+function setMood(m){
+  if (m !== mood) SFX.mood(m);
+  mood = m;
+  document.querySelectorAll('#dock [data-mood]').forEach(b =>
+    b.setAttribute('aria-pressed', String(b.dataset.mood === m)));
+  moodLabel.textContent = MOODS[m].label;
+  document.getElementById('micBtn').setAttribute('aria-pressed', String(m === 'listening'));
+}
+document.querySelectorAll('#dock [data-mood]').forEach(b =>
+  b.addEventListener('click', () => { ensureCtx(); SFX.tick(0.7); setMood(b.dataset.mood); hideHint(); }));
+
+/* ------------------------------------------------------------ pointer ---- */
+function pointer(e){
+  const r = canvas.getBoundingClientRect();
+  const nx = ((e.clientX - r.left)/r.width  - 0.5) * 2;
+  const ny = ((e.clientY - r.top )/r.height - 0.5) * 2;
+  targetYaw   = nx * 0.62;
+  targetPitch = -ny * 0.26;
+}
+window.addEventListener('pointermove', e => { pointer(e); hideHint(); });
+window.addEventListener('touchmove', e => { if(e.touches[0]) pointer(e.touches[0]); }, {passive:true});
+
+/* ------------------------------------------------------------- keyboard -- */
+window.addEventListener('keydown', e => {
+  const map = {'1':'idle','2':'listening','3':'thinking','4':'speaking'};
+  if (map[e.key]) { setMood(map[e.key]); hideHint(); }
+  if (e.key === ' ') { e.preventDefault(); setMood('speaking'); }
+  if (e.key === 't' || e.key === 'T') document.getElementById('themeBtn').click();
+  if (e.key === 'g' || e.key === 'G') document.getElementById('gestureBtn').click();
+  if (e.key === 'b' || e.key === 'B') document.getElementById('bgBtn').click();
+  if (e.key === 'f' || e.key === 'F') document.getElementById('fxBtn').click();
+});
+
+/* ---------------------------------------------------------------- hints -- */
+let hintGone = false;
+function hideHint(){
+  if (hintGone) return; hintGone = true;
+  const h = document.getElementById('hint');
+  h.classList.add('gone'); setTimeout(()=>h.remove(), 900);
+}
+setTimeout(hideHint, 9000);
+
+/* --------------------------------------------------------------- audio --- */
+/* Everything is synthesised live — no files, no CDN, no downloads.
+     ambient  : drone + fifth + filtered noise  (the 'sound' button)
+     sfx      : gestures, moods, buttons, assembly (the 'fx' button)
+   Both share one AudioContext, created on the first real click.          */
+let actx = null, soundOn = false, sfxOn = true, master = null, sfxBus = null, nodes = [];
+
+/* iOS Safari suspends AudioContext when the tab hides or the phone locks.
+   Resume it on the next real interaction instead of silently going mute. */
+document.addEventListener('visibilitychange', () => {
+  if (!actx) return;
+  if (document.visibilityState === 'visible' && actx.state === 'suspended') actx.resume().catch(()=>{});
+});
+['touchstart','pointerdown','keydown'].forEach(ev =>
+  window.addEventListener(ev, () => {
+    if (actx && actx.state === 'suspended') actx.resume().catch(()=>{});
+  }, { passive: true }));
+
+function ensureCtx(){
+  if (actx) return actx;
+  const AC = window.AudioContext || window.webkitAudioContext;
+  if (!AC) return null;
+  actx = new AC();
+  master = actx.createGain(); master.gain.value = 0.0; master.connect(actx.destination);
+  sfxBus = actx.createGain(); sfxBus.gain.value = sfxOn ? 0.85 : 0.0; sfxBus.connect(actx.destination);
+  return actx;
+}
+function buildAudio(){
+  if (!ensureCtx()) return;
+  if (nodes.length) return;                    // already built
+
+  const filt = actx.createBiquadFilter();
+  filt.type='lowpass'; filt.frequency.value=520; filt.Q.value=0.9; filt.connect(master);
+
+  const drone = actx.createOscillator(); drone.type='sawtooth'; drone.frequency.value=55;
+  const dg = actx.createGain(); dg.gain.value=0.055; drone.connect(dg).connect(filt); drone.start();
+
+  const fifth = actx.createOscillator(); fifth.type='sine'; fifth.frequency.value=82.4;
+  const fg = actx.createGain(); fg.gain.value=0.05; fifth.connect(fg).connect(filt); fifth.start();
+
+  const lfo = actx.createOscillator(); lfo.frequency.value = 0.07;
+  const lg = actx.createGain(); lg.gain.value = 220;
+  lfo.connect(lg).connect(filt.frequency); lfo.start();
+
+  const len = actx.sampleRate*4;
+  const buf = actx.createBuffer(1, len, actx.sampleRate);
+  const ch = buf.getChannelData(0);
+  for (let i=0;i<len;i++) ch[i] = (Math.random()*2-1)*0.35;
+  const noise = actx.createBufferSource(); noise.buffer = buf; noise.loop = true;
+  const nf = actx.createBiquadFilter(); nf.type='bandpass'; nf.frequency.value=1400; nf.Q.value=0.55;
+  const ng = actx.createGain(); ng.gain.value = 0.022;
+  noise.connect(nf).connect(ng).connect(master); noise.start();
+
+  nodes = [drone, fifth, lfo, noise];
+}
+
+/* ------------------------------- SFX kit -------------------------------- */
+const SFX = (() => {
+  let noiseBuf = null;
+  function noise(){
+    if (!actx) return null;
+    if (!noiseBuf){
+      const n = Math.floor(actx.sampleRate * 1.2);
+      noiseBuf = actx.createBuffer(1, n, actx.sampleRate);
+      const d = noiseBuf.getChannelData(0);
+      for (let i=0;i<n;i++) d[i] = Math.random()*2-1;
+    }
+    const src = actx.createBufferSource(); src.buffer = noiseBuf; return src;
+  }
+  function tone({freq=440, to=null, dur=0.12, type='sine', gain=0.12, delay=0}){
+    if (!actx || !sfxOn) return;
+    const t0 = actx.currentTime + delay;
+    const o = actx.createOscillator(), g = actx.createGain();
+    o.type = type;
+    o.frequency.setValueAtTime(freq, t0);
+    if (to) o.frequency.exponentialRampToValueAtTime(Math.max(20, to), t0 + dur);
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + Math.min(0.02, dur*0.3));
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    o.connect(g).connect(sfxBus);
+    o.start(t0); o.stop(t0 + dur + 0.02);
+  }
+  function sweep({from=300, to=2400, dur=0.5, q=1.4, gain=0.10, delay=0}){
+    if (!actx || !sfxOn) return;
+    const src = noise(); if (!src) return;
+    const t0 = actx.currentTime + delay;
+    const bp = actx.createBiquadFilter(); bp.type='bandpass'; bp.Q.value=q;
+    bp.frequency.setValueAtTime(from, t0);
+    bp.frequency.exponentialRampToValueAtTime(to, t0 + dur);
+    const g = actx.createGain();
+    g.gain.setValueAtTime(0.0001, t0);
+    g.gain.exponentialRampToValueAtTime(gain, t0 + dur*0.18);
+    g.gain.exponentialRampToValueAtTime(0.0001, t0 + dur);
+    src.connect(bp).connect(g).connect(sfxBus);
+    src.start(t0); src.stop(t0 + dur + 0.05);
+  }
+
+  let lastTick = 0;
+  return {
+    /* ui */
+    tick(v = 0.5){                                   // button press / gesture move
+      const now = performance.now();
+      if (now - lastTick < 55) return;
+      lastTick = now;
+      tone({ freq: 1500 + v*900, to: 700 + v*500, dur: 0.045, type:'square', gain: 0.035 });
+    },
+    hover(){ tone({ freq: 2200, dur: 0.03, type:'sine', gain: 0.018 }); },
+
+    /* gesture */
+    acquire(){                                       // hand found
+      tone({ freq: 520, to: 1040, dur: 0.13, type:'triangle', gain: 0.10 });
+      tone({ freq: 780, to: 1560, dur: 0.16, type:'sine', gain: 0.05, delay: 0.05 });
+    },
+    release(){                                       // hand lost
+      tone({ freq: 640, to: 260, dur: 0.22, type:'triangle', gain: 0.075 });
+    },
+
+    /* moods — one little phrase each */
+    mood(m){
+      if (m === 'listening') { tone({freq: 740, to: 1180, dur: 0.16, gain:0.09}); tone({freq:1480, dur:0.12, gain:0.04, delay:0.09}); }
+      else if (m === 'thinking') { tone({freq: 330, to: 495, dur: 0.22, type:'triangle', gain:0.085}); tone({freq: 660, dur:0.18, gain:0.045, delay:0.10}); }
+      else if (m === 'speaking') { tone({freq: 220, to: 440, dur: 0.18, type:'sawtooth', gain:0.055}); tone({freq: 880, to: 1320, dur: 0.16, gain:0.05, delay:0.06}); }
+      else { tone({freq: 560, to: 300, dur: 0.20, gain:0.07}); }
+    },
+
+    /* events */
+    whoosh(){ sweep({from: 220, to: 3200, dur: 0.75, q: 1.1, gain: 0.11}); },
+    assemble(){ sweep({from: 180, to: 5200, dur: 1.5, q: 0.9, gain: 0.10}); tone({freq: 110, to: 55, dur: 1.4, type:'sine', gain:0.09}); },
+    powerUp(){ tone({freq: 140, to: 700, dur: 0.35, type:'sawtooth', gain:0.06}); sweep({from: 600, to: 2600, dur: 0.4, gain: 0.05}); },
+    theme(){ [523, 659, 784].forEach((f,i) => tone({freq: f, dur: 0.13, gain: 0.055, delay: i*0.06})); }
+  };
+})();
+
+function chime(){                       // legacy: ambient flourish (used by replay/enter)
+  if (!actx) return;
+  if (soundOn) tone2Ambient();
+  SFX.whoosh();
+}
+function tone2Ambient(){
+  const o = actx.createOscillator(), g = actx.createGain();
+  o.type='sine'; o.frequency.setValueAtTime(880, actx.currentTime);
+  o.frequency.exponentialRampToValueAtTime(220, actx.currentTime+1.5);
+  g.gain.setValueAtTime(0.0001, actx.currentTime);
+  g.gain.exponentialRampToValueAtTime(0.16, actx.currentTime+0.03);
+  g.gain.exponentialRampToValueAtTime(0.0001, actx.currentTime+1.6);
+  o.connect(g).connect(master); o.start(); o.stop(actx.currentTime+1.7);
+}
+document.getElementById('soundBtn').addEventListener('click', e => {
+  ensureCtx(); buildAudio();
+  soundOn = !soundOn;
+  e.currentTarget.setAttribute('aria-pressed', String(soundOn));
+  e.currentTarget.textContent = 'sound';
+  master.gain.cancelScheduledValues(actx.currentTime);
+  master.gain.linearRampToValueAtTime(soundOn ? 0.5 : 0.0, actx.currentTime + 1.2);
+});
+document.getElementById('micBtn').addEventListener('click', () => setMood('listening'));
+document.getElementById('replayBtn').addEventListener('click', () => { ensureCtx(); assemble = 0; SFX.assemble(); });
+
+/* ----------------------------------------------------------------- gate -- */
+const gate = document.getElementById('gate');
+document.getElementById('enterBtn').addEventListener('click', () => {
+  gate.classList.add('out');
+  started = true;
+  ensureCtx();
+  if (soundOn) master.gain.value = 0.5;
+  SFX.assemble();
+  setTimeout(()=>gate.remove(), 1000);
+});
+
+
+/* ============================== TOAST / UI ================================ */
+const toastEl = document.getElementById('toast');
+let toastTimer = 0;
+function toast(msg, ms = 3400){
+  toastEl.textContent = msg;
+  toastEl.style.opacity = '1';
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => toastEl.style.opacity = '0', ms);
+}
+
+/* ============================== BRANDING ================================= */
+document.getElementById('brandName').textContent = CONFIG.name;
+document.getElementById('gateName').textContent  = CONFIG.name;
+document.getElementById('brandTag').textContent  = CONFIG.tagline;
+document.title = CONFIG.name + ' — rebuilt';
+
+function applyTheme(i){
+  themeIdx = ((i % THEMES.length) + THEMES.length) % THEMES.length;
+  const t = THEMES[themeIdx];
+  document.getElementById('themeBtn').textContent = '◐ ' + t.name;
+  document.documentElement.style.setProperty('--cyan', `rgb(${t.accent.map(v=>Math.round(v*255)).join(',')})`);
+  document.querySelectorAll('.dock button[aria-pressed="true"]').forEach(b=>{});
+}
+document.getElementById('themeBtn').addEventListener('click', () => {
+  ensureCtx(); SFX.theme();
+  applyTheme(themeIdx + 1);
+  const t = THEMES[themeIdx];
+  MOODS.idle.core = t.core.slice();
+  cur[0] = t.core[0]; cur[1] = t.core[1]; cur[2] = t.core[2];
+  toast('theme · ' + t.name, 1400);
+});
+applyTheme(0);
+
+/* ============================== VOICE AGENT ==============================
+   ears  → SpeechRecognition (browser, free)
+   brain → CONFIG.brain === 'endpoint' ? fetch(CONFIG.brainUrl) : local rules
+   mouth → speechSynthesis, with an amplitude envelope driving the core glow
+   Swap any of the three: the seams are askBrain(), speak(), startEars().
+   ========================================================================= */
+const V = { rec:null, on:false, env:0, target:0, busy:false, analyser:null, audioEl:null };
+
+/* ---- brain ---- */
+const LOCAL_BRAIN = [
+  [/^(hi|hey|hello|namaste|yo)\b/i, "Hello. I am a face with no brain attached — but I can pretend convincingly."],
+  [/who are you|what are you/i, "I am the rebuilt APEX humanoid. Point cloud, shaders, no dependencies. The thinking part is yours to wire."],
+  [/what can you do/i, "I can follow your pointer, change mood, react to your hand on camera, and speak anything you hand me."],
+  [/how (were|are) you (made|built)|how do you work/i, "Three hundred thousand points sampled from math, drawn as additive sprites, shaded as latitude rings."],
+  [/time/i, () => "It is " + new Date().toLocaleTimeString('en-IN', {hour:'2-digit', minute:'2-digit'}) + " where you are."],
+  [/joke/i, "A trading bot walked into a bar. It promised thirty percent a month and left with everyone's wallet."],
+  [/cost|price|paid|money/i, "Nothing. This one is free. The original kit costs ninety nine dollars and does less."],
+  [/bye|goodbye|see you/i, "Goodbye. I will be here, quietly rendering."]
+];
+/* ============================ COMMAND ROUTER =============================
+   The only "tasks" a web page can truly perform are tasks on itself.
+   Anything outside the tab needs a server (see server.js) — never a webpage.
+   ========================================================================= */
+function runCommand(raw){
+  const t = raw.toLowerCase();
+  const has = (...w) => w.some(x => t.includes(x));
+
+  /* theme */
+  for (const th of THEMES){
+    if (has(th.id) && has('theme','colour','color','rang')){
+      applyTheme(THEMES.indexOf(th));
+      MOODS.idle.core = th.core.slice();
+      return 'Theme set to ' + th.id + '.';
+    }
+  }
+  /* background */
+  if (has('background','bg','pichhwada','pichwada')){
+    const off = has('off','band','hatao','hide','no');
+    BG.on = !off;
+    document.getElementById('bgBtn').setAttribute('aria-pressed', String(BG.on));
+    return off ? 'Background off.' : 'Background on.';
+  }
+  /* sound / fx */
+  if (has('sound','awaaz','awaaj','ambient') && has('off','band','hatao','mute')){
+    if (soundOn) document.getElementById('soundBtn').click();
+    return 'Ambient off.';
+  }
+  if (has('sound','awaaz','awaaj','ambient') && has('on','chalu','start')){
+    if (!soundOn) document.getElementById('soundBtn').click();
+    return 'Ambient on.';
+  }
+  if (has('sfx','effect','fx')){
+    const off = has('off','band','hatao','mute');
+    if (sfxOn === off) document.getElementById('fxBtn').click();
+    return off ? 'Sound effects off.' : 'Sound effects on.';
+  }
+  /* gesture */
+  if (has('camera','gesture','haath','hand')){
+    if (has('off','band','hatao','stop','stop')){
+      if (G.on) document.getElementById('gestureBtn').click();
+      return 'Hand tracking off.';
+    }
+    if (!G.on) document.getElementById('gestureBtn').click();
+    return 'Hand tracking on — camera permission is yours to give.';
+  }
+  /* moods */
+  const moods = [['listening','sun','listen'],['thinking','soch','think'],['speaking','bol','speak'],['idle','rest','idle']];
+  for (const [m, ...keys] of moods){
+    if (has(m, ...keys)) { setMood(m); return 'Mood: ' + m + '.'; }
+  }
+  /* replay */
+  if (has('replay','phir se','dobara','assemble','build')) { document.getElementById('replayBtn').click(); return 'Rebuilding.'; }
+  /* fullscreen */
+  if (has('fullscreen','full screen','poori screen')){
+    if (!document.fullscreenElement) document.documentElement.requestFullscreen?.();
+    else document.exitFullscreen?.();
+    return 'Toggled fullscreen.';
+  }
+  /* help */
+  if (has('help','kya kar sakta','commands','madad')) return HELP_TEXT;
+  return null;
+}
+const HELP_TEXT = 'I can only change myself: mood, theme, background, sound, effects, ' +
+  'hand tracking, fullscreen, replay. Real tasks outside this page need a server — that is a different build.';
+
+function localBrain(text){
+  const cmd = runCommand(text);
+  if (cmd) return cmd;
+  for (const [re, out] of LOCAL_BRAIN) if (re.test(text)) return typeof out === 'function' ? out() : out;
+  const fallback = [
+    "I heard you. I have no model behind this, so here is honesty instead of an answer.",
+    "That is a real question and I am a decorative face. Wire a brain and I will do better.",
+    "Say more. My local rules are small, but my attention is complete."
+  ];
+  return fallback[Math.floor(Math.random()*fallback.length)];
+}
+async function askBrain(text){
+  if (CONFIG.brain === 'endpoint' && CONFIG.brainUrl){
+    try{
+      const r = await fetch(CONFIG.brainUrl, {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ text, history: [] })
+      });
+      const j = await r.json();
+      if (j.audioUrl) attachAudio(j.audioUrl);
+      return j.text || '…';
+    }catch(e){ toast('brain endpoint unreachable — using local'); }
+  }
+  return localBrain(text);
+}
+
+/* ---- mouth ---- */
+let speakSeq = 0;
+async function speak(text){
+  setMood('speaking');
+  SFX.powerUp();
+  V.target = 0.85;
+
+  /* ---- ElevenLabs path: real audio, real RMS lip-drive ---- */
+  const ttsUrl = (CONFIG.tts === 'server')
+    ? (CONFIG.ttsUrl || '/tts')
+    : (CONFIG.tts === 'auto' && location.protocol.startsWith('http') ? (CONFIG.ttsUrl || '/tts') : null);
+  if (ttsUrl){
+    const seq = ++speakSeq;
+    try{
+      const r = await fetch(ttsUrl, {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ text, voiceId: CONFIG.voiceId || undefined,
+                               modelId: CONFIG.modelId || undefined })
+      });
+      if (!r.ok){
+        const j = await r.json().catch(()=>({}));
+        throw new Error(j.error || ('tts ' + r.status));
+      }
+      const blob = await r.blob();
+      if (seq !== speakSeq) return;                       // a newer reply started
+      attachAudio(URL.createObjectURL(blob));
+      if (V.audioEl){
+        V.audioEl.onended = () => { V.target = 0.15; setTimeout(()=>{ if (mood==='speaking') setMood('idle'); }, 240); };
+      }
+      return;
+    }catch(e){
+      if (CONFIG.tts === 'server') toast('server voice unavailable — browser voice instead');
+      /* falls through to speechSynthesis */
+    }
+  }
+
+  /* ---- browser voice path ---- */
+  if (!('speechSynthesis' in window)){                    // no TTS → timed mime
+    const ms = Math.min(6000, 900 + text.length*45);
+    V.target = 1;
+    setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, ms);
+    return;
+  }
+  const u = new SpeechSynthesisUtterance(text);
+  let voices = speechSynthesis.getVoices();
+  if (!voices.length){                       /* iOS returns [] on first call */
+    speechSynthesis.onvoiceschanged = () => { /* warm them up for next turn */ speechSynthesis.getVoices(); };
+  }
+  const pick = voices.find(v => /en-IN/i.test(v.lang))
+            || voices.find(v => /Google UK English Male|Daniel|Alex|Samantha|en-GB|en-US/i.test(v.name + v.lang))
+            || voices[0];
+  if (pick) u.voice = pick;
+  u.rate = 0.98; u.pitch = 0.92; u.volume = 1;
+  u.onboundary = () => { V.target = 1.0; V.env = Math.min(1, V.env + 0.25); };
+  u.onend = () => { V.target = 0.15; setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, 260); };
+  u.onerror = () => { setMood('idle'); };
+  speechSynthesis.cancel();
+  speechSynthesis.speak(u);
+}
+
+/* ---- real audio path: analyser drives the glow honestly ---- */
+function attachAudio(url){
+  try{
+    if (!actx) buildAudio();
+    const el = new Audio(url); el.crossOrigin = 'anonymous'; el.loop = false;
+    const src = actx.createMediaElementSource(el);
+    const an = actx.createAnalyser(); an.fftSize = 512; an.smoothingTimeConstant = 0.75;
+    src.connect(an); an.connect(actx.destination);
+    V.analyser = an; V.audioEl = el;
+    V.analyserReady = true;
+    el.play().catch(err => {
+      /* autoplay blocked → resume on first gesture */
+      const resume = () => { el.play().catch(()=>{}); window.removeEventListener('pointerdown', resume); };
+      window.addEventListener('pointerdown', resume);
+    });
+  }catch(e){ /* fall back to the envelope path */ }
+}
+const rmsBuf = new Float32Array(512);
+function analyserRms(){
+  if (!V.analyser) return 0;
+  V.analyser.getFloatTimeDomainData(rmsBuf);
+  let s = 0;
+  for (let i=0;i<rmsBuf.length;i++) s += rmsBuf[i]*rmsBuf[i];
+  return Math.min(1, Math.sqrt(s/rmsBuf.length) * 9);
+}
+
+/* ---- ears ---- */
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+function handleUtterance(text){
+  if (!text || V.busy) return;
+  V.busy = true;
+  setMood('thinking');
+  setTimeout(async () => {
+    const reply = await askBrain(text);
+    toast('“' + reply.slice(0, 90) + '”', 5000);
+    speak(reply);
+    V.busy = false;
+  }, 420);
+}
+function startEars(){
+  if (!SR){ simulatedTurn(); return; }
+  try{
+    const r = new SR();
+    r.lang = 'en-IN'; r.interimResults = true; r.continuous = true;
+    r.maxAlternatives = 1;
+    r.onresult = e => {
+      let finalTxt = '', interim = '';
+      for (let i = e.resultIndex; i < e.results.length; i++){
+        const t = e.results[i][0].transcript;
+        if (e.results[i].isFinal) finalTxt += t; else interim += t;
+      }
+      if (interim) { setMood('listening'); V.target = 0.5; }
+      if (finalTxt) handleUtterance(finalTxt.trim());
+    };
+    r.onerror = ev => {
+      /* iOS: 'aborted' happens on tab switch — just restart, do not alarm the user */
+      if (ev.error === 'aborted' || ev.error === 'no-speech') return;
+      if (ev.error === 'not-allowed' || ev.error === 'service-not-allowed'){
+        toast('mic permission blocked here — running the sim instead');
+        V.on = false; syncMicBtn(); simulatedTurn();
+      }
+    };
+    r.onend = () => { if (V.on) { try{ r.start(); }catch(e){} } };
+    V.rec = r; r.start(); V.on = true;
+    setMood('listening');
+    toast('listening — speak');
+  }catch(e){ simulatedTurn(); }
+}
+function simulatedTurn(){                     // graceful demo when mic/SR is unavailable
+  setMood('listening'); V.target = 0.6;
+  toast('listening (simulated)');
+  setTimeout(() => {
+    setMood('thinking');
+    setTimeout(() => speak('Mic access is blocked in this frame, so this turn is simulated. ' +
+      'Everything else is live.'), 700);
+  }, 1500);
+}
+function syncMicBtn(){
+  const b = document.getElementById('micBtn');
+  b.setAttribute('aria-pressed', String(V.on));
+  b.textContent = V.on ? 'listening…' : 'mic';
+}
+document.getElementById('micBtn').addEventListener('click', () => {
+  if (V.on){ V.on = false; try{ V.rec && V.rec.stop(); }catch(e){}; setMood('idle'); }
+  else startEars();
+  syncMicBtn();
+  hideHint();
+});
+
+document.getElementById('fxBtn').addEventListener('click', e => {
+  ensureCtx();
+  sfxOn = !sfxOn;
+  if (sfxBus) sfxBus.gain.value = sfxOn ? 0.85 : 0.0;
+  e.currentTarget.setAttribute('aria-pressed', String(sfxOn));
+  if (sfxOn) SFX.acquire();
+  toast('sfx ' + (sfxOn ? 'on' : 'off'), 1200);
+});
+document.getElementById('bgBtn').addEventListener('click', e => {
+  BG.on = !BG.on;
+  e.currentTarget.setAttribute('aria-pressed', String(BG.on));
+  toast('background ' + (BG.on ? 'on' : 'off'), 1200);
+});
+
+/* ============================ HAND GESTURE ===============================
+   No ML library. Skin-tone blob centroid on a 80×60 downscale → head yaw.
+   Same input the pointer uses, so the two compose.
+   ========================================================================= */
+const G = { on:false, stream:null, video:null, raf:0, sx:0, sy:0, ready:false, seen:false, lastX:0, lastY:0 };
+const gView = document.getElementById('gestureView');
+const gCtx  = gView.getContext('2d');
+const work  = document.createElement('canvas');
+work.width = 80; work.height = 60;
+const wCtx = work.getContext('2d', { willReadFrequently:true });
+
+async function startGesture(){
+  try{
+    const stream = await navigator.mediaDevices.getUserMedia({ video:{ width:320, height:240, facingMode:'user' } });
+    G.stream = stream;
+    const v = document.createElement('video');
+    v.srcObject = stream; v.muted = true; v.playsInline = true;
+    await v.play();
+    G.video = v; G.on = true; G.ready = true;
+    gView.style.display = 'block';
+    setMood('listening');
+    toast('hand tracking on — move your hand, I will follow it');
+    loopGesture();
+  }catch(e){
+    const ios = /iPad|iPhone|iPod/.test(navigator.userAgent);
+    toast(ios
+      ? 'camera blocked — Safari → AA icon → Website Settings → Camera → Allow'
+      : 'camera blocked or absent — pointer control still works');
+    G.on = false;
+    document.getElementById('gestureBtn').setAttribute('aria-pressed','false');
+  }
+}
+function stopGesture(){
+  G.on = false; G.ready = false;
+  if (G.seen){ G.seen = false; SFX.release(); }
+  if (G.raf) cancelAnimationFrame(G.raf);
+  if (G.stream) G.stream.getTracks().forEach(t => t.stop());
+  G.stream = null; G.video = null;
+  gView.style.display = 'none';
+}
+function loopGesture(){
+  if (!G.on) return;
+  const v = G.video;
+  if (v && v.readyState >= 2){
+    wCtx.drawImage(v, 0, 0, 80, 60);
+    const d = wCtx.getImageData(0, 0, 80, 60).data;
+    let sx = 0, sy = 0, n = 0;
+    for (let y = 0; y < 60; y++){
+      for (let x = 0; x < 80; x++){
+        const i = (y*80 + x) * 4, r = d[i], g = d[i+1], b = d[i+2];
+        const mx = Math.max(r,g,b), mn = Math.min(r,g,b);
+        if (r > 95 && g > 40 && b > 20 && mx - mn > 18 && r > g + 8 && r > b + 8 && Math.abs(r-g) < 90){
+          sx += x; sy += y; n++;
+        }
+      }
+    }
+    if (n > 90){                                   // enough skin area = a hand/face found
+      const cx = sx/n, cy = sy/n;
+      if (!G.seen){ G.seen = true; SFX.acquire(); }  // hand entered
+      const px = G.sx, py = G.sy;
+      G.sx += (cx/80 - G.sx) * 0.25;
+      G.sy += (cy/60 - G.sy) * 0.25;
+      targetYaw   = (G.sx - 0.5) * 1.5 * 0.62;     // mirrored: move right, look right
+      targetPitch = (G.sy - 0.5) * 1.3 * 0.26;
+      const v = Math.min(1, Math.hypot(G.sx - px, G.sy - py) * 9);
+      if (v > 0.12) SFX.tick(v);                    // movement -> soft ratchet
+      hideHint();
+    } else if (G.seen){                              // hand left the frame
+      G.seen = false; SFX.release();
+    }
+    /* tiny preview */
+    gCtx.drawImage(v, 0, 0, 120, 90);
+    gCtx.globalAlpha = 0.35;
+    gCtx.strokeStyle = THEMES[themeIdx].id === 'cyan' ? '#4fd2ff' : '#9d7bff';
+    gCtx.beginPath(); gCtx.arc(G.sx*120, G.sy*90, 9, 0, TAU); gCtx.stroke();
+    gCtx.globalAlpha = 1;
+  }
+  G.raf = requestAnimationFrame(loopGesture);
+}
+document.getElementById('gestureBtn').addEventListener('click', e => {
+  if (G.on) { stopGesture(); e.currentTarget.setAttribute('aria-pressed','false'); setMood('idle'); }
+  else { startGesture(); e.currentTarget.setAttribute('aria-pressed','true'); }
+  hideHint();
+});
+window.addEventListener('beforeunload', stopGesture);
+
+/* ----------------------------------------------------------------- loop -- */
+let dpr = Math.min(window.devicePixelRatio || 1, 2);
+/* fewer points on small / low-power screens */
+const density = (() => {
+  const w = Math.min(window.innerWidth, window.innerHeight);
+  if (w < 520) return 0.45;
+  if (w < 820) return 0.70;
+  return 1.0;
+})();
+function resize(){
+  dpr = Math.min(window.devicePixelRatio || 1, 2);
+  const w = canvas.clientWidth, h = canvas.clientHeight;
+  canvas.width = Math.round(w*dpr); canvas.height = Math.round(h*dpr);
+  gl.viewport(0,0,canvas.width,canvas.height);
+}
+window.addEventListener('resize', resize); resize();
+
+gl.disable(gl.DEPTH_TEST);
+gl.enable(gl.BLEND);
+gl.blendFunc(gl.SRC_ALPHA, gl.ONE);   // additive — the whole look depends on it
+gl.clearColor(0.010, 0.020, 0.030, 1);
+
+const t0 = performance.now();
+let last = t0, frames = 0, fpsT = t0;
+const fpsEl = document.getElementById('fps');
+
+function frame(now){
+  const dt = Math.min(0.1, (now-last)/1000); last = now;
+  const t = (now - t0)/1000;
+
+  /* eased pointer follow */
+  yaw   += (targetYaw   - yaw)   * Math.min(1, dt*3.2);
+  pitch += (targetPitch - pitch) * Math.min(1, dt*3.2);
+
+  /* assemble */
+  if (started) assemble = Math.min(1, assemble + dt*0.55);
+
+  /* mood colour easing */
+  const m = MOODS[mood];
+  for (let i=0;i<3;i++) cur[i] += (m.core[i]-cur[i])*Math.min(1, dt*2.6);
+  curAmt += (m.amt-curAmt)*Math.min(1, dt*2.2);
+
+  /* accent follows the active theme */
+  const tgt = THEMES[themeIdx].accent;
+  for (let i=0;i<3;i++) accentCur[i] += (tgt[i]-accentCur[i])*Math.min(1, dt*3.0);
+
+  /* voice envelope: TTS boundaries, or real RMS when audio is streaming */
+  V.target *= Math.exp(-dt*5.5);
+  V.env += (Math.max(V.target, analyserRms()) - V.env) * Math.min(1, dt*11);
+
+  /* speaking gets a fake envelope so the core breathes like speech */
+  let amt = curAmt;
+  if (mood === 'speaking') amt *= 0.55 + 0.95*V.env;
+  if (mood === 'speaking'){
+    amt *= 0.72 + 0.5*(0.5+0.5*Math.sin(t*9.0)) * (0.6+0.4*Math.sin(t*3.1+1.2));
+  }
+  if (mood === 'listening'){
+    amt *= 1.0 + 0.35*Math.sin(t*2.2)*Math.sin(t*0.7);
+  }
+
+  const proj = perspective(50*Math.PI/180, canvas.width/canvas.height, 0.1, 40);
+  const view = lookAt([0, 0.06, 2.72], [0, 0.42, 0], [0,1,0]);
+  const vp = mul(proj, view);
+
+  gl.clear(gl.COLOR_BUFFER_BIT);
+
+  /* alive background first — additive, so the figure always reads on top */
+  if (BG.on){
+    gl.useProgram(BG.prog);
+    gl.bindVertexArray(BG.vao);
+    gl.uniformMatrix4fv(BG.U.uViewProj, false, vp);
+    gl.uniform1f(BG.U.uTime, t);
+    gl.uniform1f(BG.U.uAmt, amt);
+    gl.uniform1f(BG.U.uDpr, dpr);
+    gl.uniform1f(BG.U.uFocal, (canvas.height*0.5)/Math.tan(25*Math.PI/180));
+    gl.uniform3fv(BG.U.uAccent, accentCur);
+    gl.uniform3fv(BG.U.uCoreCol, cur);
+    gl.drawArrays(gl.POINTS, 0, BG.n);
+    gl.bindVertexArray(null);
+    gl.useProgram(prog);
+  }
+
+  gl.uniformMatrix4fv(U.uViewProj, false, vp);
+  gl.uniform1f(U.uTime, t);
+  gl.uniform1f(U.uYaw, yaw);
+  gl.uniform1f(U.uPitch, pitch);
+  gl.uniform1f(U.uCoreAmt, amt);
+  gl.uniform1f(U.uAssemble, assemble);
+  gl.uniform1f(U.uDpr, dpr);
+  gl.uniform1f(U.uDensity, density);
+  gl.uniform1f(U.uFocal, (canvas.height*0.5)/Math.tan(25*Math.PI/180));
+  gl.uniform3fv(U.uCoreCol, cur);
+  gl.uniform3fv(U.uAccent, accentCur);
+  gl.drawArrays(gl.POINTS, 0, count);
+
+  frames++;
+  if (now - fpsT > 500){
+    fpsEl.textContent = Math.round(frames*1000/(now-fpsT)) + ' fps · ' + (count/1000|0) + 'k pts';
+    frames = 0; fpsT = now;
+  }
+  requestAnimationFrame(frame);
+}
+requestAnimationFrame(frame);
+
+/* ==========================================================================
+   WHAT IS REAL IN THIS FILE NOW
+   --------------------------------------------------------------------------
+   ears   startEars()   — browser SpeechRecognition, free, no key
+   brain  askBrain()    — local rules by default; set CONFIG.brain='endpoint'
+                          and CONFIG.brainUrl to your own server:
+                            POST { text } → { text?, audioUrl? }
+   mouth  speak()       — speechSynthesis + boundary envelope; if your server
+                          returns audioUrl, attachAudio() switches the glow to
+                          a real AnalyserNode RMS so the drive is honest.
+   hands  startGesture()— skin-tone blob centroid, camera only, no library.
+
+   Two lines to re-skin everything:
+     CONFIG.name / CONFIG.tagline  →  copy
+     THEMES[]                      →  accent + core colour pairs
+   ========================================================================== */</script>
+</body>
+</html>
