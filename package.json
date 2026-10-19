@@ -1,0 +1,13 @@
+{
+  "name": "apex-humanoid",
+  "version": "1.0.0",
+  "private": true,
+  "description": "APEX Humanoid rebuild — WebGL2 point-cloud face + optional ElevenLabs voice",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js"
+  },
+  "engines": {
+    "node": ">=18"
+  }
+}
