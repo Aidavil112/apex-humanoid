@@ -276,6 +276,8 @@ function loadAvatarImg(av, cb){
   im.src = av.src;
 }
 let charIdx = 0;
+/* which avatar the humanoid opens as (3 = KAZE ninja). 0 = the original face. */
+const START_AVATAR = 3;
 
 function buildFigure(cfg){
   P.length = 0; N.length = 0; B.length = 0; S.length = 0; T.length = 0; W.length = 0; Z.length = 0;
@@ -1036,6 +1038,8 @@ document.getElementById('enterBtn').addEventListener('click', () => {
   if (soundOn) master.gain.value = 0.5;
   SFX.assemble();
   setTimeout(()=>gate.remove(), 1000);
+  /* open as the character, not the bare figure */
+  if (START_AVATAR) setTimeout(() => setCharacter(START_AVATAR), 900);
 });
 
 
