@@ -71,7 +71,7 @@ function localTools(text){
   if (/^(hi|hey|hello|namaste|start)\b/.test(t))
     return 'Namaste. Bot zinda hai. Kuch bhi likho ya voice note bhejo — jawab dunga.\n\n' +
            'Humanoid control:\n' +
-           '  /avatar kaze   — avatar badlo (nova, astra, unit7, kaze, vega, pip)\n' +
+           '  /avatar nova  — avatar badlo (nova, astra, unit7)\n' +
            '  /say namaste   — page bole\n' +
            '  /mood thinking — mood badlo\n' +
            '  /status, /voice on/off, /help';
@@ -209,7 +209,7 @@ async function handleUpdate(u){
   if (mSay){ const r = await toPage({ say: mSay[1].trim() }); return send(chat_id, '🗣 ' + mSay[1].trim() + '\n' + r); }
   const mAv = text.match(/^\/avatar(?:\s+(\w+))?/i);
   if (mAv){
-    if (!mAv[1]) return send(chat_id, 'Avatars: nova, astra, unit7, kaze, vega, pip\nUse: /avatar kaze');
+    if (!mAv[1]) return send(chat_id, 'Avatars: nova, astra, unit7\nUse: /avatar astra');
     return send(chat_id, '◈ ' + mAv[1] + '  ' + await toPage({ avatar: mAv[1].toLowerCase() }));
   }
   const mMood = text.match(/^\/mood\s+(\w+)/i);
