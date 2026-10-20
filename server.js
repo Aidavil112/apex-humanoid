@@ -115,6 +115,125 @@ async function elevenTTS(text, voiceId, modelId) {
   return Buffer.from(await r.arrayBuffer());
 }
 
+/* ---------------------------------------------------------------------------
+   MCP bridge + page state
+   The humanoid page polls GET /state. Any tool call (MCP, Telegram, curl)
+   stamps a new action and the page applies it on the next tick.
+   --------------------------------------------------------------------------- */
+const STATE = { seq: 0, mood: null, avatar: null, say: null, theme: null, ts: 0 };
+function pushAction(a){
+  STATE.seq++;
+  STATE.ts = Date.now();
+  for (const k of ['mood','avatar','say','theme']) if (a[k] !== undefined) STATE[k] = a[k];
+  return STATE.seq;
+}
+function readBody(req, limit){
+  return new Promise(resolve => {
+    let body = '';
+    req.on('data', c => { body += c; if (body.length > limit) req.destroy(); });
+    req.on('end', () => resolve(body));
+  });
+}
+
+const MCP_TOOLS = [
+  { name: 'humanoid_say',
+    description: 'Make the humanoid speak a line out loud (browser speech synthesis on the viewer\'s device).',
+    inputSchema: { type:'object', properties:{ text:{ type:'string', description:'what to say, one or two sentences' } }, required:['text'] } },
+  { name: 'humanoid_set_mood',
+    description: 'Change the humanoid mood: idle, listening, thinking or speaking.',
+    inputSchema: { type:'object', properties:{ mood:{ type:'string', enum:['idle','listening','thinking','speaking'] } }, required:['mood'] } },
+  { name: 'humanoid_set_avatar',
+    description: 'Switch the avatar. Built from code: nova, astra, unit7. Portrait avatars: kaze (anime ninja), vega (founder), pip (3d cartoon).',
+    inputSchema: { type:'object', properties:{ avatar:{ type:'string', enum:['nova','astra','unit7','kaze','vega','pip'] } }, required:['avatar'] } },
+  { name: 'humanoid_set_theme',
+    description: 'Cycle the colour theme by index (0 = cyan).',
+    inputSchema: { type:'object', properties:{ index:{ type:'integer' } }, required:['index'] } },
+  { name: 'humanoid_status',
+    description: 'Read the current humanoid state (last action sequence number, mood, avatar).',
+    inputSchema: { type:'object', properties:{} } }
+];
+
+function mcpCall(name, args){
+  args = args || {};
+  switch (name){
+    case 'humanoid_say': {
+      const text = String(args.text || '').slice(0, 600);
+      if (!text) throw new Error('text required');
+      pushAction({ say: text });
+      return 'spoken: ' + text;
+    }
+    case 'humanoid_set_mood': {
+      const m = String(args.mood || '');
+      if (!['idle','listening','thinking','speaking'].includes(m)) throw new Error('bad mood');
+      pushAction({ mood: m });
+      return 'mood -> ' + m;
+    }
+    case 'humanoid_set_avatar': {
+      const a = String(args.avatar || '').toLowerCase();
+      if (!['nova','astra','unit7','kaze','vega','pip'].includes(a)) throw new Error('bad avatar');
+      pushAction({ avatar: a });
+      return 'avatar -> ' + a;
+    }
+    case 'humanoid_set_theme': {
+      pushAction({ theme: Number(args.index) | 0 });
+      return 'theme -> ' + (Number(args.index) | 0);
+    }
+    case 'humanoid_status':
+      return JSON.stringify({ seq: STATE.seq, mood: STATE.mood, avatar: STATE.avatar, lastActionAt: STATE.ts });
+    default:
+      throw new Error('unknown tool: ' + name);
+  }
+}
+
+async function handleMcp(req, res){
+  const raw = await readBody(req, 1e6);
+  let msg;
+  try { msg = JSON.parse(raw || '{}'); } catch(e){
+    res.writeHead(400, {'content-type':'application/json'});
+    return res.end(JSON.stringify({ jsonrpc:'2.0', id:null, error:{ code:-32700, message:'parse error' } }));
+  }
+  const id = (msg.id === undefined) ? null : msg.id;
+  const reply = (result) => {
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    res.end(JSON.stringify({ jsonrpc:'2.0', id, result }));
+  };
+  const fail = (code, message) => {
+    res.writeHead(200, {'content-type':'application/json'});
+    res.end(JSON.stringify({ jsonrpc:'2.0', id, error:{ code, message } }));
+  };
+
+  try {
+    switch (msg.method){
+      case 'initialize':
+        return reply({
+          protocolVersion: '2025-06-18',
+          capabilities: { tools: { listChanged: false } },
+          serverInfo: { name: 'apex-humanoid', version: '1.0.0' }
+        });
+      case 'notifications/initialized':
+      case 'notifications/cancelled':
+        res.writeHead(202); return res.end();
+      case 'ping':
+        return reply({});
+      case 'tools/list':
+        return reply({ tools: MCP_TOOLS });
+      case 'tools/call': {
+        const p = msg.params || {};
+        try {
+          const out = mcpCall(p.name, p.arguments);
+          return reply({ content: [{ type:'text', text: String(out) }], isError: false });
+        } catch (e){
+          return reply({ content: [{ type:'text', text: 'error: ' + e.message }], isError: true });
+        }
+      }
+      default:
+        return fail(-32601, 'method not found: ' + msg.method);
+    }
+  } catch (e){
+    return fail(-32603, e.message);
+  }
+}
+
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css',
                '.png': 'image/png', '.jpg': 'image/jpeg', '.mp3': 'audio/mpeg' };
 
@@ -123,6 +242,37 @@ const server = http.createServer(async (req, res) => {
   res.setHeader('access-control-allow-origin', '*');
   res.setHeader('access-control-allow-headers', 'content-type');
   if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
+
+  /* ---- MCP endpoint (Streamable HTTP, JSON responses) ---- */
+  if (req.url.split('?')[0] === '/mcp') {
+    if (req.method === 'POST') return handleMcp(req, res);
+    if (req.method === 'GET') {
+      res.writeHead(200, {'content-type':'application/json'});
+      return res.end(JSON.stringify({ name:'apex-humanoid', transport:'streamable-http',
+        note:'POST JSON-RPC 2.0 here. Tools: ' + MCP_TOOLS.map(t => t.name).join(', ') }));
+    }
+    res.writeHead(405); return res.end();
+  }
+
+  /* ---- what the page polls ---- */
+  if (req.url.split('?')[0] === '/state' && req.method === 'GET') {
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    return res.end(JSON.stringify(STATE));
+  }
+
+  /* ---- plain REST control, handy from a phone or curl ---- */
+  if (req.url.split('?')[0] === '/cmd' && req.method === 'POST') {
+    readBody(req, 1e5).then(body => {
+      let p = {};
+      try { p = JSON.parse(body || '{}'); } catch (e) {}
+      const out = {};
+      for (const k of ['say','mood','avatar','theme']) if (p[k] !== undefined) out[k] = p[k];
+      const seq = pushAction(out);
+      res.writeHead(200, {'content-type':'application/json'});
+      res.end(JSON.stringify({ ok: true, seq }));
+    });
+    return;
+  }
 
   if (req.url.startsWith('/chat') && req.method === 'POST') {
     let body = '';
@@ -186,9 +336,21 @@ const server = http.createServer(async (req, res) => {
   });
 });
 
+/* ---- Telegram channel rides along in the same free service ---- */
+if (process.env.TELEGRAM_BOT_TOKEN) {
+  try {
+    const { spawn } = require('child_process');
+    const child = spawn(process.execPath, [path.join(ROOT, 'telegram.js')],
+      { env: Object.assign({}, process.env, { PORT: String(PORT) }), stdio: 'inherit' });
+    child.on('exit', c => console.log('telegram bot exited', c));
+    console.log('telegram bot: started');
+  } catch (e) { console.log('telegram bot failed:', e.message); }
+}
+
 server.listen(PORT, '0.0.0.0', () => {
   console.log('brain + page on http://0.0.0.0:' + PORT);
   console.log('  brain:', process.env.OPENAI_API_KEY ? 'openai'
            : process.env.GEMINI_API_KEY ? 'gemini' : 'local rules (no key set)');
   console.log('  voice:', EL_KEY ? 'elevenlabs ' + EL_MODEL : 'browser speechSynthesis (no key set)');
+  console.log('  mcp  : POST /mcp  ·  page state GET /state');
 });
