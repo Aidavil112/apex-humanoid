@@ -74,7 +74,7 @@ async function askGemini(text, history) {
      then fall back to whatever the key can actually see. */
   /* voice-first order: the lite models answer in about a second, the big ones
      think for many seconds. Swap with GEMINI_MODEL if you want smarter/slower. */
-  const models = [process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+  const models = [process.env.GEMINI_MODEL, 'gemini-3.1-flash-lite', 'gemini-3.5-flash-lite',
                   'gemini-3.8-flash', 'gemini-flash-latest']
                  .filter(Boolean);
   let lastErr = 'no model tried';
@@ -99,6 +99,25 @@ async function askGemini(text, history) {
         })
       });
     } finally { clearTimeout(timer); }
+    if (r.status === 400){
+      /* some models reject thinkingConfig — retry the same model without it */
+      const r2 = await fetch(`${BASE}/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        body: JSON.stringify({
+          contents: history.concat([{ role: 'user', parts: [{ text }] }]),
+          systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Answer in ONE short spoken sentence, at most 15 words. No markdown, no lists. Match the user language (Hindi or English).' }] },
+          generationConfig: { maxOutputTokens: 120, temperature: 0.85 }
+        })
+      });
+      if (!r2.ok) throw new Error(model + ' ' + r2.status);
+      const j2 = await r2.json();
+      const o2 = j2.candidates && j2.candidates[0] && j2.candidates[0].content &&
+                 j2.candidates[0].content.parts && j2.candidates[0].content.parts[0] &&
+                 j2.candidates[0].content.parts[0].text;
+      if (!o2) throw new Error(model + ' empty reply');
+      return o2.trim();
+    }
     if (!r.ok) throw new Error(model + ' ' + r.status);
     const j = await r.json();
     const out = j.candidates && j.candidates[0] && j.candidates[0].content &&
@@ -538,8 +557,8 @@ const server = http.createServer(async (req, res) => {
       if (!key){ send({ text: localReply(text), done: true }); return res.end(); }
       const history = hist.filter(h => h && h.role && h.text)
         .map(h => ({ role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text).slice(0, 800) }] }));
-      const models = [want, process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite',
-                      'gemini-3.1-flash-lite', 'gemini-3.8-flash']
+      const models = [want, process.env.GEMINI_MODEL, 'gemini-3.1-flash-lite',
+                      'gemini-3.5-flash-lite', 'gemini-3.8-flash']
                      .filter(Boolean)
                      .filter((m, i, a) => a.indexOf(m) === i);
       let wrote = false;
@@ -581,7 +600,7 @@ const server = http.createServer(async (req, res) => {
           if (wrote){ send({ done: true }); return res.end(); }
         } catch (e) { /* try next model */ }
       }
-      send({ text: localReply(text), done: true });
+      send({ text: 'Quota khatam ho gaya hai — Google ka free limit aaj ke liye khatam. Kal dopahar ke baad reset hoga.', done: true });
       res.end();
     });
     return;
