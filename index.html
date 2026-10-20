@@ -2294,6 +2294,12 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
       <div id="ytLog" style="margin-top:12px;font-size:12px;line-height:1.7;color:#8fd8f5;white-space:pre-wrap"></div>
       <canvas id="ytPreview" style="width:100%;border-radius:14px;margin-top:12px;display:none;background:#000"></canvas>
       <div id="ytOut" style="display:none;margin-top:14px">
+        <button id="ytShare" style="display:none;width:100%;background:linear-gradient(90deg,#a3141c,#ff2d3f);
+          color:#fff;border:0;border-radius:12px;padding:15px;font:inherit;font-weight:800;font-size:14px;
+          letter-spacing:.06em;margin-bottom:10px">📤 SHARE → YOUTUBE</button>
+        <div id="ytShareHint" style="display:none;font-size:11px;line-height:1.6;color:#8fd8f5;margin-bottom:10px">
+          Share sheet khulega → YouTube chuno → video apne aap chala jayega. Title/description pehle se copy ho jayenge.
+        </div>
         <a id="ytDL" download style="display:block;text-align:center;background:#0d1a24;border:1px solid #2ea8c9;
           color:#9fe8ff;border-radius:12px;padding:13px;text-decoration:none;font-size:13px;margin-bottom:8px">
           ⬇ download video</a>
@@ -2555,6 +2561,31 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
       dl.textContent = '⬇ download video (' + (blob.size/1048576).toFixed(1) + ' MB)';
       const th = $('ytThumb'); th.href = makeThumb(plan);
       th.download = 'thumbnail.png';
+
+      /* ---- one-tap hand-off to the YouTube app (no API key, no login screen) ---- */
+      const fileName = ((plan.title || 'apex-short').replace(/[^\w\u0900-\u097F -]/g, '').slice(0, 46) || 'apex-short') +
+                       (mime.includes('mp4') ? '.mp4' : '.webm');
+      const file = new File([blob], fileName, { type: mime });
+      const shareBtn = $('ytShare');
+      if (navigator.canShare && navigator.canShare({ files: [file] })){
+        shareBtn.style.display = 'block';
+        $('ytShareHint').style.display = 'block';
+        shareBtn.onclick = async () => {
+          try {
+            await navigator.clipboard.writeText(plan.title + '\n\n' + plan.description + '\n\n' +
+              (plan.tags || []).map(t => '#' + t).join(' '));
+            shareBtn.textContent = '📤 title copy ✓ — sharing…';
+          } catch (e){}
+          try { await navigator.share({ files: [file], title: plan.title, text: plan.title }); }
+          catch (e){ log('share cancel: ' + e.message); }
+          shareBtn.textContent = '📤 SHARE → YOUTUBE';
+        };
+      } else {
+        shareBtn.style.display = 'block';
+        shareBtn.textContent = '📤 this browser cannot share files — use ⬇ download';
+        shareBtn.disabled = true;
+        shareBtn.style.opacity = '.6';
+      }
       $('ytMeta').textContent =
         'TITLE\n' + plan.title + '\n\nDESCRIPTION\n' + plan.description +
         '\n\nTAGS\n' + (plan.tags || []).join(', ') +
