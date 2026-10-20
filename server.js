@@ -518,8 +518,9 @@ const server = http.createServer(async (req, res) => {
   if (req.url.split('?')[0] === '/diag' && req.method === 'GET') {
     const key = process.env.GEMINI_API_KEY;
     if (!key){ res.writeHead(500, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'GEMINI_API_KEY not set'})); }
-    const probe = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash',
-                   'gemini-flash-latest', 'gemini-4-argon'];
+    const probe = ['gemini-3.1-flash-lite', 'gemini-3.5-flash-lite',
+                   'gemini-2.5-flash-preview-tts', 'gemini-3.5-flash-preview-tts',
+                   'gemini-3.1-flash-tts-preview', 'gemini-2.5-pro-preview-tts'];
     const out = { keyLen: key.length, keyPrefix: key.slice(0,3), models: [], list: null };
     for (const m of probe){
       try {
