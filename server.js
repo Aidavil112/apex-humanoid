@@ -572,6 +572,51 @@ const server = http.createServer(async (req, res) => {
     return;
   }
 
+  /* ---- content agent: hook + reel script + caption + hashtags, one call ---- */
+  if (req.url.split('?')[0] === '/content/plan' && req.method === 'POST') {
+    readBody(req, 1e5).then(async body => {
+      let p = {}; try { p = JSON.parse(body || '{}'); } catch (e) {}
+      const topic = String(p.topic || '').slice(0, 300);
+      const lang = p.lang === 'en' ? 'English' : 'Hindi (Roman script, casual)';
+      const niche = String(p.niche || '').slice(0, 80);
+      if (!topic){ res.writeHead(400, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'topic required'})); }
+      const key = process.env.GEMINI_API_KEY;
+      if (!key){ res.writeHead(503, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'no key'})); }
+      const prompt =
+        'You are a content strategist for short-form video. Topic: "' + topic + '".' +
+        (niche ? ' Niche: ' + niche + '.' : '') +
+        ' Write in ' + lang + '.\nReturn ONLY JSON with this shape:\n' +
+        '{"hooks":[5 strings, each under 12 words, each a different angle],' +
+        '"script":[{"t":seconds,"line":string}],' +      // 0,3,6,... up to 30
+        '"caption":string (max 220 chars, ends with a question),' +
+        '"hashtags":[12 strings without #],' +
+        '"cta":string,' +
+        '"thumbnailText":string (max 4 words, CAPS),' +
+        '"bestTime":string (one sentence),' +
+        '"whyItWorks":string (one sentence about the hook)}';
+      try {
+        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 1100, temperature: 0.95, responseMimeType: 'application/json' }
+          })
+        });
+        const j = await r.json();
+        const txt = j.candidates && j.candidates[0] && j.candidates[0].content &&
+                    j.candidates[0].content.parts && j.candidates[0].content.parts.map(x => x.text || '').join('');
+        const plan = JSON.parse(txt);
+        res.writeHead(200, {'content-type':'application/json'});
+        res.end(JSON.stringify(plan));
+      } catch (e){
+        res.writeHead(502, {'content-type':'application/json'});
+        res.end(JSON.stringify({ error: 'gemini: ' + e.message }));
+      }
+    });
+    return;
+  }
+
   if (req.url.split('?')[0] === '/yt/voice' && req.method === 'POST') {
     readBody(req, 1e5).then(async body => {
       let p = {}; try { p = JSON.parse(body || '{}'); } catch (e) {}
