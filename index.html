@@ -1449,6 +1449,17 @@ function handleUtterance(text){
   if (!text || V.busy) return;
   V.busy = true;
   setMood('thinking');
+  /* printer intent — answered by the server, not the model */
+  if (/\b(printer|print|3d)\b/i.test(text) && location.protocol.startsWith('http')){
+    fetch('printer').then(r => r.json()).then(j => {
+      const say = j.error ? 'Printer: ' + j.error
+        : !j.configured ? 'Koi printer set nahi hai.'
+        : 'Printer ' + (j.state || '') + '. File ' + (j.file || 'koi nahi') +
+          (j.progress != null ? ', ' + j.progress + ' percent done.' : '.');
+      toast('“' + say + '”', 5000); speak(say); V.busy = false;
+    }).catch(() => { V.busy = false; });
+    return;
+  }
   setTimeout(async () => {
     const reply = await askBrain(text);
     toast('“' + reply.slice(0, 90) + '”', 5000);
