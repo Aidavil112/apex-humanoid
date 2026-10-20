@@ -90,7 +90,7 @@ async function askGemini(text, history) {
         signal: ctrl.signal,
         body: JSON.stringify({
           contents: history.concat([{ role: 'user', parts: [{ text }] }]),
-          systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Reply in one or two short spoken sentences. No markdown. Match the language the user speaks (Hindi or English).' }] },
+          systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Answer in ONE short spoken sentence, at most 15 words. No markdown, no lists. Match the user language (Hindi or English).' }] },
           generationConfig: {
             maxOutputTokens: 120,
             temperature: 0.85,
@@ -493,6 +493,63 @@ const server = http.createServer(async (req, res) => {
   if (req.url.split('?')[0] === '/state' && req.method === 'GET') {
     res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
     return res.end(JSON.stringify(STATE));
+  }
+
+  /* ---- streaming brain: first words out in ~1s, speak while it writes ---- */
+  if (req.url.split('?')[0] === '/chat/stream' && req.method === 'POST') {
+    readBody(req, 1e6).then(async body => {
+      let text = '', hist = [];
+      try { const b = JSON.parse(body || '{}'); text = (b.text || '').slice(0, 2000); hist = Array.isArray(b.history) ? b.history.slice(-8) : []; } catch (e) {}
+      res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
+      const send = o => res.write('data: ' + JSON.stringify(o) + '\n\n');
+      const key = process.env.GEMINI_API_KEY;
+      if (!key){ send({ text: localReply(text), done: true }); return res.end(); }
+      const history = hist.filter(h => h && h.role && h.text)
+        .map(h => ({ role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text).slice(0, 800) }] }));
+      const models = [process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'].filter(Boolean);
+      let wrote = false;
+      for (const model of models){
+        try {
+          const r = await fetch(
+            'https://generativelanguage.googleapis.com/v1beta/models/' + model + ':streamGenerateContent?alt=sse',
+            { method:'POST',
+              headers: { 'content-type':'application/json', 'x-goog-api-key': key },
+              body: JSON.stringify({
+                contents: history.concat([{ role:'user', parts:[{ text }] }]),
+                systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Answer in ONE short spoken sentence, at most 15 words. No markdown. Match the user language (Hindi or English).' }] },
+                generationConfig: { maxOutputTokens: 120, temperature: 0.9, thinkingConfig: { thinkingBudget: 0 } }
+              })
+            }
+          );
+          if (!r.ok) continue;
+          const reader = r.body.getReader();
+          const dec = new TextDecoder();
+          let buf = '';
+          while (true){
+            const { value, done } = await reader.read();
+            if (done) break;
+            buf += dec.decode(value, { stream: true });
+            const lines = buf.split('\n');
+            buf = lines.pop();
+            for (const line of lines){
+              if (!line.startsWith('data:')) continue;
+              const raw = line.slice(5).trim();
+              if (!raw || raw === '[DONE]') continue;
+              try {
+                const j = JSON.parse(raw);
+                const parts = j.candidates && j.candidates[0] && j.candidates[0].content && j.candidates[0].content.parts;
+                const piece = parts && parts.map(p => p.text || '').join('');
+                if (piece){ wrote = true; send({ text: piece }); }
+              } catch (e) {}
+            }
+          }
+          if (wrote){ send({ done: true }); return res.end(); }
+        } catch (e) { /* try next model */ }
+      }
+      send({ text: localReply(text), done: true });
+      res.end();
+    });
+    return;
   }
 
   /* ---- one-shot event, the same thing Telegram/schedulers use ---- */
