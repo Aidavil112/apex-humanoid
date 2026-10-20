@@ -2486,15 +2486,25 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
       YT.plan = plan;
       log('     title: ' + plan.title);
 
+      if (plan.note) log('     (script simple mode: ' + plan.note.slice(0, 80) + ')');
       log('2/5  ' + plan.scenes.length + ' scene ki awaaz… (Gemini voice)');
       const voices = [];
       for (let i = 0; i < plan.scenes.length; i++){
-        const txt = (plan.scenes[i].narration || plan.scenes[i].caption || '').trim();
-        const vr = await fetch('yt/voice', { method:'POST', headers:{'content-type':'application/json'},
-          body: JSON.stringify({ text: txt.slice(0, 400) }) });
-        if (!vr.ok) throw new Error('voice failed: ' + (await vr.text()).slice(0, 120));
-        voices.push(await vr.arrayBuffer());
-        log('     voice ' + (i+1) + '/' + plan.scenes.length + ' ✓');
+        /* never send an empty line: fall back to the caption, then to the topic */
+        const txt = String(plan.scenes[i].narration || plan.scenes[i].caption || topic).trim().slice(0, 400);
+        let ok = false;
+        for (let tryNo = 0; tryNo < 2 && !ok; tryNo++){
+          const vr = await fetch('yt/voice', { method:'POST', headers:{'content-type':'application/json'},
+            body: JSON.stringify({ text: txt }) });
+          if (vr.ok){ voices.push(await vr.arrayBuffer()); ok = true; }
+          else {
+            const msg = (await vr.text()).slice(0, 90);
+            log('     voice ' + (i+1) + ' retry: ' + msg);
+            await new Promise(r => setTimeout(r, 1200));
+          }
+        }
+        if (!ok){ voices.push(null); log('     voice ' + (i+1) + ' ✗ (chhod diya, sirf caption dikhega)'); }
+        else log('     voice ' + (i+1) + '/' + plan.scenes.length + ' ✓');
       }
 
       log('3/5  audio jod raha hoon…');
@@ -2502,7 +2512,15 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
       const ac = new AC();
       await ac.resume();
       const decoded = [];
-      for (const ab of voices) decoded.push(await ac.decodeAudioData(ab.slice(0)));
+      for (const ab of voices){
+        if (!ab){ decoded.push(null); continue; }
+        try { decoded.push(await ac.decodeAudioData(ab.slice(0))); }
+        catch (e){ decoded.push(null); }
+      }
+      /* a missing voice still needs a slot on the timeline */
+      decoded.forEach((b, i) => { if (!b){
+        const buf = ac.createBuffer(1, Math.floor(ac.sampleRate * 1.6), ac.sampleRate);
+        decoded[i] = buf; } });
 
       const gap = 0.35;
       let total = 0;
