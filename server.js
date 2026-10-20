@@ -72,19 +72,33 @@ async function askGemini(text, history) {
   const BASE = 'https://generativelanguage.googleapis.com/v1beta';
   /* Model names move fast (2.5-flash was retired 20 Oct 2026). Newest first,
      then fall back to whatever the key can actually see. */
-  const models = [process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.6-flash',
-                  'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
+  /* voice-first order: the lite models answer in about a second, the big ones
+     think for many seconds. Swap with GEMINI_MODEL if you want smarter/slower. */
+  const models = [process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite',
+                  'gemini-3.8-flash', 'gemini-flash-latest']
                  .filter(Boolean);
   let lastErr = 'no model tried';
   const ask = async (model) => {
-    const r = await fetch(`${BASE}/models/${model}:generateContent`, {
-      method: 'POST',
-      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
-      body: JSON.stringify({
-        contents: history.concat([{ role: 'user', parts: [{ text }] }]),
-        systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Reply in one or two short spoken sentences. No markdown. Match the language the user speaks (Hindi or English).' }] }
-      })
-    });
+    /* hard 8s cap per model: a spoken reply that takes longer is useless */
+    const ctrl = new AbortController();
+    const timer = setTimeout(() => ctrl.abort(), 8000);
+    let r;
+    try {
+      r = await fetch(`${BASE}/models/${model}:generateContent`, {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+        signal: ctrl.signal,
+        body: JSON.stringify({
+          contents: history.concat([{ role: 'user', parts: [{ text }] }]),
+          systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Reply in one or two short spoken sentences. No markdown. Match the language the user speaks (Hindi or English).' }] },
+          generationConfig: {
+            maxOutputTokens: 120,
+            temperature: 0.85,
+            thinkingConfig: { thinkingBudget: 0 }      /* thinking = seconds of silence */
+          }
+        })
+      });
+    } finally { clearTimeout(timer); }
     if (!r.ok) throw new Error(model + ' ' + r.status);
     const j = await r.json();
     const out = j.candidates && j.candidates[0] && j.candidates[0].content &&
