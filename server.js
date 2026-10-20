@@ -121,6 +121,12 @@ async function elevenTTS(text, voiceId, modelId) {
    stamps a new action and the page applies it on the next tick.
    --------------------------------------------------------------------------- */
 const STATE = { seq: 0, mood: null, avatar: null, say: null, theme: null, ts: 0 };
+function IST_note(){
+  try {
+    return new Intl.DateTimeFormat('en-GB', { timeZone:'Asia/Kolkata', hour:'2-digit', minute:'2-digit', hour12:false })
+      .format(new Date()) + ' IST';
+  } catch (e) { return new Date().toISOString(); }
+}
 function pushAction(a){
   STATE.seq++;
   STATE.ts = Date.now();
@@ -135,6 +141,53 @@ function readBody(req, limit){
   });
 }
 
+/* ---------------------------------------------------------------------------
+   SCHEDULE — the humanoid speaks on its own, with nobody typing.
+   Free: it is just a timer inside this service.
+   Env SCHEDULE:  "HH:MM=text | HH:MM=text"   (24h clock, IST)
+   Times are read in Asia/Kolkata no matter what timezone the server runs in.
+   --------------------------------------------------------------------------- */
+const DEFAULT_SCHEDULE = '08:00=Good morning. Systems are awake and the room is quiet. | 23:00=It is eleven. Time to close the screen and sleep.';
+function parseSchedule(str){
+  return String(str || '').split('|').map(part => {
+    const i = part.indexOf('=');
+    if (i < 0) return null;
+    const hm = part.slice(0, i).trim().match(/^(\d{1,2}):(\d{2})$/);
+    const text = part.slice(i + 1).trim();
+    if (!hm || !text) return null;
+    const h = Math.min(23, parseInt(hm[1], 10)), m = Math.min(59, parseInt(hm[2], 10));
+    return { h, m, text, key: (h < 10 ? '0' : '') + h + ':' + (m < 10 ? '0' : '') + m };
+  }).filter(Boolean);
+}
+const SCHEDULE = parseSchedule(process.env.SCHEDULE || DEFAULT_SCHEDULE);
+const fired = {};                      /* "2026-10-20 08:00" -> true */
+
+function istParts(){
+  const f = new Intl.DateTimeFormat('en-GB', {
+    timeZone: 'Asia/Kolkata', hour12: false,
+    year: 'numeric', month: '2-digit', day: '2-digit',
+    hour: '2-digit', minute: '2-digit'
+  });
+  const o = {};
+  for (const p of f.formatToParts(new Date())) o[p.type] = p.value;
+  return o;                            /* {year, month, day, hour, minute} */
+}
+function scheduleTick(){
+  const t = istParts();
+  const key = t.year + '-' + t.month + '-' + t.day + ' ' + t.hour + ':' + t.minute;
+  for (const s of SCHEDULE){
+    if (s.h !== Number(t.hour) || s.m !== Number(t.minute)) continue;
+    if (fired[key + ' ' + s.key]) continue;
+    fired[key + ' ' + s.key] = true;
+    pushAction({ say: s.text, mood: 'speaking' });
+    console.log('schedule fired', s.key, '->', s.text.slice(0, 60));
+  }
+  /* keep the fired map small */
+  const keys = Object.keys(fired);
+  if (keys.length > 40) for (const k of keys.slice(0, keys.length - 40)) delete fired[k];
+}
+if (SCHEDULE.length) setInterval(scheduleTick, 20000);
+
 const MCP_TOOLS = [
   { name: 'humanoid_say',
     description: 'Make the humanoid speak a line out loud (browser speech synthesis on the viewer\'s device).',
@@ -148,6 +201,9 @@ const MCP_TOOLS = [
   { name: 'humanoid_set_theme',
     description: 'Cycle the colour theme by index (0 = cyan).',
     inputSchema: { type:'object', properties:{ index:{ type:'integer' } }, required:['index'] } },
+  { name: 'humanoid_schedule',
+    description: 'List the automatic lines the humanoid speaks on its own (times in IST).',
+    inputSchema: { type:'object', properties:{} } },
   { name: 'humanoid_status',
     description: 'Read the current humanoid state (last action sequence number, mood, avatar).',
     inputSchema: { type:'object', properties:{} } }
@@ -178,6 +234,10 @@ function mcpCall(name, args){
       pushAction({ theme: Number(args.index) | 0 });
       return 'theme -> ' + (Number(args.index) | 0);
     }
+    case 'humanoid_schedule':
+      return SCHEDULE.length
+        ? SCHEDULE.map(s => s.key + ' IST — ' + s.text).join('\n')
+        : 'no schedule set';
     case 'humanoid_status':
       return JSON.stringify({ seq: STATE.seq, mood: STATE.mood, avatar: STATE.avatar, lastActionAt: STATE.ts });
     default:
@@ -258,6 +318,26 @@ const server = http.createServer(async (req, res) => {
   if (req.url.split('?')[0] === '/state' && req.method === 'GET') {
     res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
     return res.end(JSON.stringify(STATE));
+  }
+
+  /* ---- one-shot event, the same thing Telegram/schedulers use ---- */
+  if (req.url.split('?')[0] === '/event' && req.method === 'POST') {
+    readBody(req, 1e5).then(body => {
+      let p = {};
+      try { p = JSON.parse(body || '{}'); } catch (e) {}
+      const out = {};
+      for (const k of ['say','mood','avatar','theme']) if (p[k] !== undefined) out[k] = p[k];
+      if (!Object.keys(out).length) { res.writeHead(400, {'content-type':'application/json'}); return res.end(JSON.stringify({ error:'nothing to do' })); }
+      const seq = pushAction(out);
+      res.writeHead(200, {'content-type':'application/json'});
+      res.end(JSON.stringify({ ok:true, seq, at: IST_note() }));
+    });
+    return;
+  }
+
+  if (req.url.split('?')[0] === '/schedule' && req.method === 'GET') {
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    return res.end(JSON.stringify({ now: IST_note(), schedule: SCHEDULE.map(s => ({ time: s.key + ' IST', text: s.text })) }));
   }
 
   /* ---- plain REST control, handy from a phone or curl ---- */
@@ -353,4 +433,5 @@ server.listen(PORT, '0.0.0.0', () => {
            : process.env.GEMINI_API_KEY ? 'gemini' : 'local rules (no key set)');
   console.log('  voice:', EL_KEY ? 'elevenlabs ' + EL_MODEL : 'browser speechSynthesis (no key set)');
   console.log('  mcp  : POST /mcp  ·  page state GET /state');
+  console.log('  auto : ' + (SCHEDULE.length ? SCHEDULE.map(s => s.key + ' IST').join(', ') + '  (GET /schedule)' : 'off'));
 });
