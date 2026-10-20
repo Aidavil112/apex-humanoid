@@ -495,6 +495,32 @@ const server = http.createServer(async (req, res) => {
     return res.end(JSON.stringify(STATE));
   }
 
+  /* ---- brain diagnostics: which models this key can actually use ---- */
+  if (req.url.split('?')[0] === '/diag' && req.method === 'GET') {
+    const key = process.env.GEMINI_API_KEY;
+    if (!key){ res.writeHead(500, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'GEMINI_API_KEY not set'})); }
+    const probe = ['gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash',
+                   'gemini-flash-latest', 'gemini-4-argon'];
+    const out = { keyLen: key.length, keyPrefix: key.slice(0,3), models: [], list: null };
+    for (const m of probe){
+      try {
+        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + m + ':generateContent',
+          { method:'POST', headers: { 'content-type':'application/json', 'x-goog-api-key': key },
+            body: JSON.stringify({ contents:[{ role:'user', parts:[{ text:'hi' }] }],
+              generationConfig: { maxOutputTokens: 8, thinkingConfig: { thinkingBudget: 0 } } }) });
+        const t = (await r.text()).slice(0, 220);
+        out.models.push({ model: m, status: r.status, body: t });
+      } catch (e){ out.models.push({ model: m, status: 'ERR', body: e.message }); }
+    }
+    try {
+      const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models?pageSize=200', { headers: { 'x-goog-api-key': key } });
+      const j = await r.json();
+      out.list = (j.models || []).map(m => m.name.replace(/^models\//, '')).filter(n => !/image|tts|audio|embedding|veo|imagen|lyria/i.test(n));
+    } catch (e){ out.list = 'failed: ' + e.message; }
+    res.writeHead(200, {'content-type':'application/json'});
+    return res.end(JSON.stringify(out, null, 1));
+  }
+
   /* ---- streaming brain: first words out in ~1s, speak while it writes ---- */
   if (req.url.split('?')[0] === '/chat/stream' && req.method === 'POST') {
     readBody(req, 1e6).then(async body => {
