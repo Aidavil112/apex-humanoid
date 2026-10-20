@@ -170,6 +170,17 @@ async function handleUpdate(u){
   const text = (msg.text || '').trim();
   if (!text) return;
 
+  /* a pasted block of commands (one message, many lines) — run each line */
+  if (/\n/.test(text)){
+    const lines = text.split(/\n/).map(l => l.trim()).filter(Boolean).slice(0, 8);
+    if (lines.length > 1){
+      for (const line of lines){
+        await handleUpdate({ message: Object.assign({}, msg, { text: line }) });
+      }
+      return;
+    }
+  }
+
   /* ---- humanoid control: forwarded to the local server (same free service) ---- */
   const PORT = process.env.PORT || 8787;
   async function toPage(obj){
