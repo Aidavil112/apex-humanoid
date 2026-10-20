@@ -161,6 +161,7 @@
     <button data-mood="thinking" aria-pressed="false">thinking</button>
     <button data-mood="speaking" aria-pressed="false">speaking</button>
     <span class="sep"></span>
+    <button class="ghost" id="voiceBtn" aria-pressed="true">🗣 voice</button>
     <button class="ghost" id="micBtn" aria-pressed="false">mic</button>
     <button class="ghost" id="replayBtn" aria-pressed="false">replay</button>
     <button class="ghost" id="soundBtn" aria-pressed="false">sound</button>
@@ -1138,6 +1139,15 @@ document.getElementById('enterBtn').addEventListener('click', () => {
   setTimeout(()=>gate.remove(), 1000);
   /* open as the character, not the bare figure */
   if (START_AVATAR) setTimeout(() => setCharacter(START_AVATAR), 900);
+  /* voice: unlock on the tap, then greet */
+  unlockSpeech();
+  refreshVoices();
+  syncVoiceBtn();
+  setTimeout(() => {
+    const hour = new Date().getHours();
+    const hi = hour < 12 ? 'Good morning' : hour < 17 ? 'Good afternoon' : 'Good evening';
+    speak(hi + '. I am ' + CONFIG.name + '. The particle shell is online.');
+  }, 1600);
 });
 
 
@@ -1328,15 +1338,18 @@ async function speak(text){
     setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, ms);
     return;
   }
-  const u = new SpeechSynthesisUtterance(text);
-  let voices = speechSynthesis.getVoices();
-  if (!voices.length){                       /* iOS returns [] on first call */
-    speechSynthesis.onvoiceschanged = () => { /* warm them up for next turn */ speechSynthesis.getVoices(); };
+  if (!VOICE.on){                                          /* voice switched off */
+    const ms = Math.min(6000, 700 + text.length*45);
+    setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, ms);
+    return;
   }
-  const pick = voices.find(v => /en-IN/i.test(v.lang))
-            || voices.find(v => /Google UK English Male|Daniel|Alex|Samantha|en-GB|en-US/i.test(v.name + v.lang))
-            || voices[0];
+  const u = new SpeechSynthesisUtterance(text);
+  if (!VOICE.list.length) refreshVoices();
+  const hindi = /[\u0900-\u097F]/.test(text);
+  const rank = rankedVoices(hindi);
+  const pick = rank[VOICE.idx] || rank[0];
   if (pick) u.voice = pick;
+  u.lang = (pick && pick.lang) || (hindi ? 'hi-IN' : 'en-IN');
   u.rate = 0.98; u.pitch = 0.92; u.volume = 1;
   u.onboundary = () => { V.target = 1.0; V.env = Math.min(1, V.env + 0.25); };
   u.onend = () => { V.target = 0.15; setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, 260); };
@@ -1441,6 +1454,22 @@ document.getElementById('fxBtn').addEventListener('click', e => {
   e.currentTarget.setAttribute('aria-pressed', String(sfxOn));
   if (sfxOn) SFX.acquire();
   toast('sfx ' + (sfxOn ? 'on' : 'off'), 1200);
+});
+document.getElementById('voiceBtn').addEventListener('click', () => {
+  unlockSpeech();
+  refreshVoices();
+  const rank = rankedVoices(false);
+  if (!rank.length){                       /* voices load lazily on some browsers */
+    speak('Testing the voice. ' + CONFIG.name + ' is online.');
+    toast('no voice list yet — speaking with the default', 2000);
+    return;
+  }
+  VOICE.idx = (VOICE.idx + 1) % rank.length;
+  if (!VOICE.on){ VOICE.on = true; }
+  syncVoiceBtn();
+  const v = rank[VOICE.idx];
+  speak('This is ' + v.name.split('(')[0].trim() + '. ' + CONFIG.name + ' is online.');
+  toast('voice · ' + v.name.split('(')[0].trim(), 1600);
 });
 document.getElementById('bgBtn').addEventListener('click', e => {
   BG.on = !BG.on;
@@ -1866,6 +1895,63 @@ function frame(now){
   requestAnimationFrame(frame);
 }
 requestAnimationFrame(frame);
+
+/* ============================== VOICE ====================================
+   Free on-device voice. iOS gives Siri-class voices; Chrome gives Google's.
+   Devanagari text -> Hindi voice, otherwise Indian English first.
+   ========================================================================= */
+const VOICE = { on: true, list: [], idx: 0, unlocked: false };
+
+function refreshVoices(){
+  if (!('speechSynthesis' in window)) return;
+  VOICE.list = speechSynthesis.getVoices() || [];
+}
+if ('speechSynthesis' in window){
+  refreshVoices();
+  speechSynthesis.onvoiceschanged = refreshVoices;
+}
+
+function scoreVoice(v, hindi){
+  const n = (v.name + ' ' + v.lang).toLowerCase();
+  let s = 0;
+  if (hindi && /hi[-_]?in/.test(n)) s += 60;
+  if (/en[-_]?in/.test(n)) s += 50;
+  if (/siri/.test(n)) s += 40;                       /* best on iPhone */
+  if (/google/.test(n)) s += 22;
+  if (/female|samantha|karen|moira|veena|rishi|lekha/.test(n)) s += 12;
+  if (/en[-_]?gb|en[-_]?us/.test(n)) s += 10;
+  if (v.localService) s += 9;
+  if (/compact|espeak/.test(n)) s -= 18;             /* the robot ones */
+  if (!/^en|^hi/.test(v.lang)) s -= 30;
+  return s;
+}
+function rankedVoices(hindi){
+  return VOICE.list.slice().sort((a,b) => scoreVoice(b, hindi) - scoreVoice(a, hindi));
+}
+function voiceLabel(){
+  const v = VOICE.list[VOICE.idx];
+  if (!VOICE.on) return '🔇 voice';
+  if (!v) return '🗣 voice';
+  const n = v.name.replace(/\s*\(.*?\)/, '').split(' ')[0];
+  return '🗣 ' + n;
+}
+function syncVoiceBtn(){
+  const b = document.getElementById('voiceBtn');
+  if (!b) return;
+  b.textContent = voiceLabel();
+  b.setAttribute('aria-pressed', String(VOICE.on));
+}
+
+/* iOS only allows speech after a real tap — call this inside the ENTER handler */
+function unlockSpeech(){
+  if (!('speechSynthesis' in window) || VOICE.unlocked) return;
+  try {
+    const u = new SpeechSynthesisUtterance(' ');
+    u.volume = 0;
+    speechSynthesis.speak(u);
+    VOICE.unlocked = true;
+  } catch (e) {}
+}
 
 /* ==========================================================================
    REMOTE CONTROL  (MCP -> server -> this page)
