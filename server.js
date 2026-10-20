@@ -417,14 +417,20 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* ---- Telegram channel rides along in the same free service ---- */
-const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.TG_TOKEN || '';
-if (TG_TOKEN && /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TG_TOKEN.trim())) {
+/* Built-in fallback so the bot works even when the dashboard env var is fiddly.
+   Prefer the env var when it is valid; fall back to this one otherwise. */
+const BUILTIN_TG = '8760517786:AAEuQK_sKupwXxo6rJndR5SG2y4b0twLyOM';
+const TOKEN_RE = /^\d{6,}:[A-Za-z0-9_-]{30,}$/;
+const envTG = (process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.TG_TOKEN || '').trim();
+const TG_TOKEN = TOKEN_RE.test(envTG) ? envTG : (TOKEN_RE.test(BUILTIN_TG) ? BUILTIN_TG : '');
+console.log('telegram token source:', TOKEN_RE.test(envTG) ? 'env var' : (TG_TOKEN ? 'built-in' : 'none'));
+if (TG_TOKEN) {
   try {
     const { spawn } = require('child_process');
     const child = spawn(process.execPath, [path.join(ROOT, 'telegram.js')],
       { env: Object.assign({}, process.env, { TELEGRAM_BOT_TOKEN: TG_TOKEN.trim(), PORT: String(PORT) }), stdio: 'inherit' });
     child.on('exit', c => console.log('telegram bot exited with code', c));
-    console.log('telegram bot: started');
+    console.log('telegram bot: started (token from ' + (TOKEN_RE.test(envTG) ? 'env var' : 'built-in') + ')');
   } catch (e) { console.log('telegram bot failed:', e.message); }
 } else {
   console.log('telegram bot: skipped — TELEGRAM_BOT_TOKEN ' +
