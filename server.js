@@ -606,9 +606,17 @@ const server = http.createServer(async (req, res) => {
             generationConfig: { maxOutputTokens: 1100, temperature: 0.95, responseMimeType: 'application/json' }
           })
         });
-        const j = await r.json();
-        const txt = j.candidates && j.candidates[0] && j.candidates[0].content &&
-                    j.candidates[0].content.parts && j.candidates[0].content.parts.map(x => x.text || '').join('');
+        const raw = await r.text();
+        if (!r.ok){
+          res.writeHead(502, {'content-type':'application/json'});
+          return res.end(JSON.stringify({ error: 'gemini ' + r.status + ': ' + raw.slice(0, 160) }));
+        }
+        const j = JSON.parse(raw);
+        let txt = (j.candidates && j.candidates[0] && j.candidates[0].content &&
+                   j.candidates[0].content.parts || []).map(x => x.text || '').join('').trim();
+        txt = txt.replace(/^```(?:json)?/i, '').replace(/```$/, '').trim();
+        const a = txt.indexOf('{'), b2 = txt.lastIndexOf('}');
+        if (a > 0 || b2 < txt.length - 1) txt = txt.slice(a, b2 + 1);
         const plan = JSON.parse(txt);
         res.writeHead(200, {'content-type':'application/json'});
         res.end(JSON.stringify(plan));
