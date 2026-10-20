@@ -63,6 +63,24 @@
     color:#0a1620;background:var(--cyan);border-color:var(--cyan);
     box-shadow:0 0 18px -4px rgba(79,210,255,.75);font-weight:600}
   .dock .sep{width:1px;height:16px;background:rgba(79,210,255,.16);margin:0 3px}
+  .dock #menuBtn{font-size:13px;line-height:1;padding:7px 12px}
+  .dock #micBtn{padding:7px 16px}
+  #menu{position:absolute;left:50%;transform:translateX(-50%);
+    bottom:calc(96px + env(safe-area-inset-bottom));
+    width:min(420px, calc(100vw - 32px));display:none;flex-direction:column;gap:7px;
+    padding:9px;border-radius:12px;z-index:6;
+    background:rgba(6,14,21,.9);border:1px solid rgba(79,210,255,.18);
+    backdrop-filter:blur(12px);-webkit-backdrop-filter:blur(12px);
+    box-shadow:0 18px 50px -20px rgba(0,0,0,.95)}
+  #menu.open{display:flex}
+  #menu .row{display:flex;gap:6px;flex-wrap:wrap;justify-content:center}
+  #menu button{appearance:none;cursor:pointer;font-family:var(--mono);font-size:10.5px;
+    letter-spacing:.13em;text-transform:uppercase;color:#7fa8c2;background:transparent;
+    border:1px solid rgba(79,210,255,.10);border-radius:7px;padding:8px 11px;transition:.18s ease}
+  #menu button:hover{color:#d7f1ff;background:rgba(79,210,255,.07)}
+  #menu button[aria-pressed="true"]{color:#0a1620;background:var(--cyan);border-color:var(--cyan);font-weight:600}
+  #menu button.ghost[aria-pressed="true"]{background:rgba(79,210,255,.14);color:#bfe6ff;
+    border-color:rgba(79,210,255,.4);font-weight:500}
   .dock .ghost{color:#5d7f96}
   .dock .ghost[aria-pressed="true"]{background:rgba(79,210,255,.14);color:#bfe6ff;
     border-color:rgba(79,210,255,.4);box-shadow:none;font-weight:500}
@@ -156,22 +174,29 @@
   </div>
 
   <div class="dock" id="dock">
-    <button data-mood="idle" aria-pressed="true">idle</button>
-    <button data-mood="listening" aria-pressed="false">listening</button>
-    <button data-mood="thinking" aria-pressed="false">thinking</button>
-    <button data-mood="speaking" aria-pressed="false">speaking</button>
-    <span class="sep"></span>
-    <button class="ghost" id="micBtn" aria-pressed="false">mic</button>
-    <button class="ghost" id="replayBtn" aria-pressed="false">replay</button>
-    <button class="ghost" id="soundBtn" aria-pressed="false">sound</button>
-    <span class="sep"></span>
-    <button class="ghost" id="gestureBtn" aria-pressed="false">gesture</button>
-    <button class="ghost" id="charBtn">◈ nova</button>
-    <button class="ghost" id="photoBtn">◉ face</button>
-    <button class="ghost" id="fxBtn" aria-pressed="true">♪ fx</button>
-    <button class="ghost" id="bgBtn" aria-pressed="true">◧ bg</button>
-    <button class="ghost" id="themeBtn">◐ cyan</button>
-    <button class="ghost" id="langBtn" aria-pressed="false">अ en</button>
+    <button id="menuBtn" aria-expanded="false" aria-label="menu">☰</button>
+    <button id="micBtn" aria-pressed="false">● mic</button>
+  </div>
+  <div id="menu" aria-hidden="true">
+    <div class="row" id="moods">
+      <button data-mood="idle" aria-pressed="true">idle</button>
+      <button data-mood="listening" aria-pressed="false">listening</button>
+      <button data-mood="thinking" aria-pressed="false">thinking</button>
+      <button data-mood="speaking" aria-pressed="false">speaking</button>
+    </div>
+    <div class="row">
+      <button class="ghost" id="gestureBtn" aria-pressed="false">✋ gesture</button>
+      <button class="ghost" id="charBtn">◈ nova</button>
+      <button class="ghost" id="photoBtn">◉ face</button>
+      <button class="ghost" id="replayBtn" aria-pressed="false">↺ replay</button>
+    </div>
+    <div class="row">
+      <button class="ghost" id="langBtn" aria-pressed="false">अ en</button>
+      <button class="ghost" id="themeBtn">◐ cyan</button>
+      <button class="ghost" id="bgBtn" aria-pressed="true">◧ bg</button>
+      <button class="ghost" id="fxBtn" aria-pressed="true">♪ fx</button>
+      <button class="ghost" id="soundBtn" aria-pressed="true">sound</button>
+    </div>
   </div>
 </div>
 
@@ -1505,6 +1530,23 @@ function setCharacter(i){
   toast('avatar · ' + c.name, 1600);
 }
 document.getElementById('charBtn').addEventListener('click', () => setCharacter(charIdx + 1));
+
+/* ---- the whole UI lives behind two buttons: ☰ menu + ● mic ---- */
+const menuEl = document.getElementById('menu');
+const menuBtn = document.getElementById('menuBtn');
+function setMenu(open){
+  menuEl.classList.toggle('open', open);
+  menuEl.setAttribute('aria-hidden', String(!open));
+  menuBtn.setAttribute('aria-expanded', String(open));
+}
+menuBtn.addEventListener('click', () => { ensureCtx(); SFX.tick(0.6); setMenu(!menuEl.classList.contains('open')); });
+menuEl.addEventListener('click', e => { if (e.target.closest('button')){ SFX.tick(0.4); } });
+/* close the sheet after an action, unless it toggles a mood */
+menuEl.addEventListener('click', e => {
+  const b = e.target.closest('button');
+  if (b && !b.hasAttribute('data-mood')) setTimeout(() => setMenu(false), 140);
+});
+document.addEventListener('keydown', e => { if (e.key === 'Escape') setMenu(false); });
 
 /* ---- photo mode: your own face, sampled into the same particles ---- */
 let photoMode = false;
