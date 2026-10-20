@@ -213,6 +213,66 @@ function scheduleTick(){
 }
 if (SCHEDULE.length) setInterval(scheduleTick, 20000);
 
+/* ---------------------------------------------------------------------------
+   3D PRINTER BRIDGE (OctoPrint / Klipper-Moonraker style REST)
+   Works with nothing configured: every call says "no printer configured".
+   Env: OCTOPRINT_URL  e.g. http://192.168.1.50   (+ optional OCTOPRINT_API_KEY)
+   --------------------------------------------------------------------------- */
+const PRINTER_URL = (process.env.OCTOPRINT_URL || '').replace(/\/+$/, '');
+const PRINTER_KEY = process.env.OCTOPRINT_API_KEY || '';
+const PRINTER_KIND = (process.env.PRINTER_KIND || 'octoprint').toLowerCase();   /* octoprint | moonraker */
+
+async function printerCall(pathname, method, body){
+  if (!PRINTER_URL) throw Object.assign(new Error('no printer configured (set OCTOPRINT_URL)'), { code: 501 });
+  const headers = { 'content-type': 'application/json' };
+  if (PRINTER_KEY) headers['X-Api-Key'] = PRINTER_KEY;
+  const sep = pathname.includes('?') ? '&' : '?';
+  const url = PRINTER_URL + pathname + (PRINTER_KEY && PRINTER_KIND === 'moonraker' ? sep + 'apikey=' + encodeURIComponent(PRINTER_KEY) : '');
+  const r = await fetch(url, { method, headers, body: body ? JSON.stringify(body) : undefined });
+  const txt = await r.text();
+  let json = null;
+  try { json = JSON.parse(txt); } catch (e) {}
+  if (!r.ok) throw Object.assign(new Error('printer ' + r.status + ': ' + txt.slice(0, 160)), { code: 502 });
+  return json || { raw: txt.slice(0, 200) };
+}
+
+async function printerStatus(){
+  if (!PRINTER_URL) return { configured: false, hint: 'Render > Environment > OCTOPRINT_URL = http://your-printer-ip' };
+  if (PRINTER_KIND === 'moonraker'){
+    const j = await printerCall('/printer/objects/query?print_stats&virtual_sdcard', 'GET');
+    const st = (j.result && j.result.status) || {};
+    const ps = st.print_stats || {};
+    const vd = st.virtual_sdcard || {};
+    return { configured: true, kind: 'moonraker', state: ps.state || 'unknown',
+             file: ps.filename || null, progress: vd.progress ? Math.round(vd.progress*100) : null };
+  }
+  const job = await printerCall('/api/job', 'GET');
+  const pr  = await printerCall('/api/printer', 'GET');
+  return { configured: true, kind: 'octoprint',
+           state: (pr.state && pr.state.text) || 'unknown',
+           file: job.job && job.job.file && job.job.file.name || null,
+           progress: job.progress && job.progress.completion != null ? Math.round(job.progress.completion) : null,
+           timeLeft: job.progress && job.progress.printTimeLeft != null ? Math.round(job.progress.printTimeLeft/60) + ' min' : null };
+}
+
+async function printerStart(file){
+  if (!PRINTER_URL) throw Object.assign(new Error('no printer configured (set OCTOPRINT_URL)'), { code: 501 });
+  if (!file) throw Object.assign(new Error('file name required, e.g. benchy.gcode'), { code: 400 });
+  if (PRINTER_KIND === 'moonraker'){
+    await printerCall('/printer/print/start?filename=' + encodeURIComponent(file), 'POST');
+    return 'started ' + file;
+  }
+  await printerCall('/api/files/local/' + encodeURIComponent(file), 'POST', { command: 'select', print: true });
+  return 'started ' + file;
+}
+
+async function printerStop(){
+  if (!PRINTER_URL) throw Object.assign(new Error('no printer configured (set OCTOPRINT_URL)'), { code: 501 });
+  if (PRINTER_KIND === 'moonraker'){ await printerCall('/printer/print/cancel', 'POST'); return 'cancelled'; }
+  await printerCall('/api/job', 'POST', { command: 'cancel' });
+  return 'cancelled';
+}
+
 const MCP_TOOLS = [
   { name: 'humanoid_say',
     description: 'Make the humanoid speak a line out loud (browser speech synthesis on the viewer\'s device).',
@@ -226,6 +286,15 @@ const MCP_TOOLS = [
   { name: 'humanoid_set_theme',
     description: 'Cycle the colour theme by index (0 = cyan).',
     inputSchema: { type:'object', properties:{ index:{ type:'integer' } }, required:['index'] } },
+  { name: 'printer_status',
+    description: 'Read the 3D printer state, current file and progress.',
+    inputSchema: { type:'object', properties:{} } },
+  { name: 'printer_start',
+    description: 'Start printing a gcode file that is already on the printer.',
+    inputSchema: { type:'object', properties:{ file:{ type:'string' } }, required:['file'] } },
+  { name: 'printer_stop',
+    description: 'Cancel the current print job.',
+    inputSchema: { type:'object', properties:{} } },
   { name: 'humanoid_schedule',
     description: 'List the automatic lines the humanoid speaks on its own (times in IST).',
     inputSchema: { type:'object', properties:{} } },
@@ -259,6 +328,12 @@ function mcpCall(name, args){
       pushAction({ theme: Number(args.index) | 0 });
       return 'theme -> ' + (Number(args.index) | 0);
     }
+    case 'printer_status':
+      return printerStatus().then(j => JSON.stringify(j));
+    case 'printer_start':
+      return printerStart(args.file);
+    case 'printer_stop':
+      return printerStop();
     case 'humanoid_schedule':
       return SCHEDULE.length
         ? SCHEDULE.map(s => s.key + ' IST — ' + s.text).join('\n')
@@ -305,8 +380,8 @@ async function handleMcp(req, res){
       case 'tools/call': {
         const p = msg.params || {};
         try {
-          const out = mcpCall(p.name, p.arguments);
-          return reply({ content: [{ type:'text', text: String(out) }], isError: false });
+          const out = await Promise.resolve(mcpCall(p.name, p.arguments));
+          return reply({ content: [{ type:'text', text: typeof out === 'string' ? out : JSON.stringify(out) }], isError: false });
         } catch (e){
           return reply({ content: [{ type:'text', text: 'error: ' + e.message }], isError: true });
         }
@@ -339,6 +414,30 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(405); return res.end();
   }
 
+  /* ---- printer bridge (works with nothing configured: says so) ---- */
+  if (req.url.split('?')[0].startsWith('/printer')) {
+    const p = req.url.split('?')[0];
+    (async () => {
+      try {
+        let out;
+        if (p === '/printer' || p === '/printer/status') out = await printerStatus();
+        else if (p === '/printer/start' && req.method === 'POST'){
+          const body = await readBody(req, 1e5);
+          let j = {}; try { j = JSON.parse(body || '{}'); } catch (e) {}
+          out = { ok: true, result: await printerStart(j.file) };
+        }
+        else if (p === '/printer/stop' && req.method === 'POST') out = { ok: true, result: await printerStop() };
+        else { res.writeHead(404, {'content-type':'application/json'}); return res.end(JSON.stringify({ error:'unknown printer route' })); }
+        res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+        res.end(JSON.stringify(out));
+      } catch (e){
+        res.writeHead(e.code || 502, {'content-type':'application/json'});
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    })();
+    return;
+  }
+
   /* ---- diagnostics: is a key visible to this process? ---- */
   if (req.url.split('?')[0] === '/health' && req.method === 'GET') {
     const g = process.env.GEMINI_API_KEY || '';
@@ -352,7 +451,8 @@ const server = http.createServer(async (req, res) => {
       TELEGRAM_BOT_TOKEN: mask(t),
       telegramEnvKeys: Object.keys(process.env).filter(k => /TELE|GEM|OPENAI/i.test(k)),
       model: process.env.GEMINI_MODEL || 'auto (3.8-flash → 3.6 → 3.5-lite → 3.1-lite → discover)',
-      schedule: SCHEDULE.map(s => s.key)
+      schedule: SCHEDULE.map(s => s.key),
+      printer: PRINTER_URL ? PRINTER_KIND + ' @ ' + PRINTER_URL : 'not configured'
     }, null, 1));
   }
 
