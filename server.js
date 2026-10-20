@@ -539,7 +539,10 @@ const server = http.createServer(async (req, res) => {
         title: topic.slice(0, 70),
         description: topic + '\n\n#shorts',
         tags: ['shorts', 'ai'], thumbnailText: topic.split(/\s+/).slice(0, 4).join(' ').toUpperCase(),
-        scenes: Array.from({ length: n }, (_, i) => ({ caption: i ? '' : topic, narration: i ? '' : topic }))
+        scenes: Array.from({ length: n }, (_, i) => ({
+          caption: topic.split(/\s+/).slice(0, 7).join(' ').toUpperCase(),
+          narration: i === 0 ? topic + '.' : topic + ' — part ' + (i + 1) + '.'
+        }))
       };
       if (!key){ res.writeHead(200, {'content-type':'application/json'}); return res.end(JSON.stringify(fallback)); }
       const prompt = 'Make a YouTube Shorts plan about: "' + topic + '".\n' +
