@@ -339,6 +339,23 @@ const server = http.createServer(async (req, res) => {
     res.writeHead(405); return res.end();
   }
 
+  /* ---- diagnostics: is a key visible to this process? ---- */
+  if (req.url.split('?')[0] === '/health' && req.method === 'GET') {
+    const g = process.env.GEMINI_API_KEY || '';
+    const o = process.env.OPENAI_API_KEY || '';
+    const t = process.env.TELEGRAM_BOT_TOKEN || '';
+    const mask = v => v ? v.slice(0, 6) + '…' + v.slice(-4) + ' (len ' + v.length + ')' : 'not set';
+    res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
+    return res.end(JSON.stringify({
+      GEMINI_API_KEY: mask(g),
+      OPENAI_API_KEY: mask(o),
+      TELEGRAM_BOT_TOKEN: mask(t),
+      telegramEnvKeys: Object.keys(process.env).filter(k => /TELE|GEM|OPENAI/i.test(k)),
+      model: process.env.GEMINI_MODEL || 'auto (3.8-flash → 3.6 → 3.5-lite → 3.1-lite → discover)',
+      schedule: SCHEDULE.map(s => s.key)
+    }, null, 1));
+  }
+
   /* ---- what the page polls ---- */
   if (req.url.split('?')[0] === '/state' && req.method === 'GET') {
     res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
