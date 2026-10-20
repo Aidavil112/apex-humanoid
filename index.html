@@ -2262,6 +2262,12 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
         <button id="ytClose" style="background:#0d1a24;color:#9fe8ff;border:1px solid #1d3a4d;
           border-radius:10px;padding:8px 12px;font:inherit;font-size:12px">✕ close</button>
       </div>
+      <div style="display:flex;gap:8px;margin-bottom:10px">
+        <button id="tabVideo" style="flex:1;background:#12303f;border:1px solid #2ea8c9;color:#c9f2ff;
+          border-radius:10px;padding:10px;font:inherit;font-size:12px">🎬 VIDEO</button>
+        <button id="tabContent" style="flex:1;background:#0a151d;border:1px solid #1d3a4d;color:#8fd8f5;
+          border-radius:10px;padding:10px;font:inherit;font-size:12px">📝 CONTENT</button>
+      </div>
       <input id="ytTopic" placeholder="topic likho — e.g. AI se paisa kaise kamaye"
         style="width:100%;box-sizing:border-box;background:#0a151d;border:1px solid #1d3a4d;
         border-radius:12px;padding:14px;color:#eaf9ff;font:inherit;font-size:14px;margin-bottom:10px">
@@ -2281,6 +2287,10 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
       <button id="ytGo" style="width:100%;background:linear-gradient(90deg,#1a6d8f,#2ea8c9);color:#03181f;
         border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;font-size:14px;letter-spacing:.06em">
         ▸ MAKE THE VIDEO</button>
+      <button id="ctGo" style="display:none;width:100%;background:linear-gradient(90deg,#1a6d3f,#2fc978);color:#03150c;
+        border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;font-size:14px;letter-spacing:.06em">
+        ▸ MAKE THE CONTENT PACKAGE</button>
+      <div id="ctOut" style="display:none;margin-top:12px"></div>
       <div id="ytLog" style="margin-top:12px;font-size:12px;line-height:1.7;color:#8fd8f5;white-space:pre-wrap"></div>
       <canvas id="ytPreview" style="width:100%;border-radius:14px;margin-top:12px;display:none;background:#000"></canvas>
       <div id="ytOut" style="display:none;margin-top:14px">
@@ -2387,6 +2397,68 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
     cx.fillText('APEX HUMANoid', 640, 640);
     return c.toDataURL('image/png');
   }
+
+  /* ---------- tabs ---------- */
+  let TAB = 'video';
+  function setTab(t){
+    TAB = t;
+    $('tabVideo').style.background = t === 'video' ? '#12303f' : '#0a151d';
+    $('tabVideo').style.borderColor = t === 'video' ? '#2ea8c9' : '#1d3a4d';
+    $('tabContent').style.background = t === 'content' ? '#12303f' : '#0a151d';
+    $('tabContent').style.borderColor = t === 'content' ? '#2fc978' : '#1d3a4d';
+    $('ytGo').style.display = t === 'video' ? 'block' : 'none';
+    $('ctGo').style.display = t === 'content' ? 'block' : 'none';
+  }
+  $('tabVideo').addEventListener('click', () => setTab('video'));
+  $('tabContent').addEventListener('click', () => setTab('content'));
+
+  function card(title, body){
+    const d = document.createElement('div');
+    d.style.cssText = 'background:#0a151d;border:1px solid #1d3a4d;border-radius:12px;padding:12px;margin-bottom:10px';
+    d.innerHTML = '<div style="font-size:10px;letter-spacing:.18em;color:#6fc9e8;margin-bottom:6px">' + title + '</div>' +
+      '<div style="font-size:13px;line-height:1.6;white-space:pre-wrap;color:#dff4ff">' + body + '</div>';
+    return d;
+  }
+
+  /* ---------- content package ---------- */
+  $('ctGo').addEventListener('click', async () => {
+    const topic = $('ytTopic').value.trim();
+    if (!topic){ log('pehle topic likho.'); return; }
+    const out = $('ctOut');
+    out.style.display = 'block'; out.innerHTML = '';
+    out.appendChild(card('WORKING…', 'hook aur script likh raha hoon'));
+    try {
+      const r = await fetch('content/plan', { method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ topic, lang: $('ytLang').value }) });
+      const j = await r.json();
+      if (j.error) throw new Error(j.error);
+      out.innerHTML = '';
+      out.appendChild(card('5 HOOKS', j.hooks.map((h, i) => (i+1) + '. ' + h).join('\n')));
+      out.appendChild(card('SCRIPT (timed)', j.script.map(x => x.t + 's — ' + x.line).join('\n')));
+      out.appendChild(card('CAPTION', j.caption));
+      out.appendChild(card('HASHTAGS', (j.hashtags || []).map(h => '#' + h).join(' ')));
+      out.appendChild(card('THUMBNAIL TEXT', j.thumbnailText));
+      out.appendChild(card('BEST TIME', j.bestTime));
+      out.appendChild(card('WHY IT WORKS', j.whyItWorks));
+      const cp = document.createElement('button');
+      cp.textContent = 'copy everything';
+      cp.style.cssText = 'width:100%;background:#0d1a24;color:#9fe8ff;border:1px solid #1d3a4d;border-radius:12px;padding:12px;font:inherit;font-size:12px;margin-bottom:8px';
+      cp.onclick = async () => {
+        const txt = 'HOOKS\n' + j.hooks.join('\n') + '\n\nSCRIPT\n' + j.script.map(x => x.t + 's — ' + x.line).join('\n') +
+          '\n\nCAPTION\n' + j.caption + '\n\nHASHTAGS\n' + j.hashtags.map(h => '#' + h).join(' ') + '\n\n' + j.cta;
+        try { await navigator.clipboard.writeText(txt); cp.textContent = 'copied ✓';
+          setTimeout(() => cp.textContent = 'copy everything', 1500); } catch (e){}
+      };
+      out.appendChild(cp);
+      const mk = document.createElement('button');
+      mk.textContent = '🎬 isi topic ki video banao';
+      mk.style.cssText = 'width:100%;background:linear-gradient(90deg,#1a6d8f,#2ea8c9);color:#03181f;border:0;border-radius:12px;padding:13px;font:inherit;font-weight:700;font-size:13px';
+      mk.onclick = () => { setTab('video'); $('ytGo').click(); };
+      out.appendChild(mk);
+    } catch (e){
+      out.innerHTML = ''; out.appendChild(card('ERROR', e.message));
+    }
+  });
 
   /* ---------- the run ---------- */
   $('ytGo').addEventListener('click', async () => {
