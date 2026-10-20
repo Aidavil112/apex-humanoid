@@ -174,6 +174,7 @@
   </div>
 
   <div class="dock" id="dock">
+    <button id="powerBtn" aria-pressed="false" aria-label="turn everything on">○ OFF</button>
     <button id="menuBtn" aria-expanded="false" aria-label="menu">☰</button>
     <button id="micBtn" aria-pressed="false">● mic</button>
   </div>
@@ -920,7 +921,7 @@ function drawHud(now, accent){
 const CONFIG = {
   name:    'APEX HUMANOID',
   tagline: 'rebuilt · raw webgl2',
-  brain:   'local',          // 'local' | 'endpoint'  (endpoint = your own server)
+  brain:   'auto',           // 'local' | 'auto' (server /chat with Gemini) | 'endpoint'
   brainUrl:'',               // e.g. 'http://localhost:8787/chat' → { text }
   tts:     'auto',           // 'auto' = use this page's server if it has one · 'browser' · 'server'
   ttsUrl:  '',               // blank = same-origin '/tts' (server.js serves the page too)
@@ -1297,6 +1298,17 @@ function localBrain(text){
   return fallback[Math.floor(Math.random()*fallback.length)];
 }
 async function askBrain(text){
+  /* 'auto' = use this server's /chat (Gemini when GEMINI_API_KEY is set, local rules otherwise) */
+  if (CONFIG.brain === 'auto' && location.protocol.startsWith('http')){
+    try{
+      const r = await fetch('chat', {
+        method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ text, history: [] })
+      });
+      const j = await r.json();
+      if (j.text) return j.text;
+    }catch(e){ /* fall through to local rules */ }
+  }
   if (CONFIG.brain === 'endpoint' && CONFIG.brainUrl){
     try{
       const r = await fetch(CONFIG.brainUrl, {
@@ -1395,7 +1407,11 @@ async function speak(text){
   u.rate = (langMode === 'hi-IN' ? 0.94 : 0.98);
   u.pitch = 0.92; u.volume = 1;
   u.onboundary = () => { V.target = 1.0; V.env = Math.min(1, V.env + 0.25); };
-  u.onend = () => { V.target = 0.15; setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, 260); };
+  u.onend = () => {
+    V.target = 0.15;
+    setTimeout(() => { if (mood === 'speaking') setMood('idle'); }, 260);
+    if (poweredOn && !V.on) setTimeout(() => { try { startEars(); } catch(e){} }, 700);   /* hands-free loop */
+  };
   u.onerror = () => { setMood('idle'); };
   speechSynthesis.cancel();
   speechSynthesis.speak(u);
@@ -1532,6 +1548,39 @@ function setCharacter(i){
 document.getElementById('charBtn').addEventListener('click', () => setCharacter(charIdx + 1));
 
 /* ---- the whole UI lives behind two buttons: ☰ menu + ● mic ---- */
+/* ---- one switch for everything: sound, fx, mic, gesture, auto-speak ---- */
+const powerBtn = document.getElementById('powerBtn');
+let poweredOn = false;
+async function powerOn(){
+  poweredOn = true;
+  powerBtn.textContent = '● ON';
+  powerBtn.setAttribute('aria-pressed','true');
+  try { await ensureCtx(); } catch(e){}
+  if (!soundOn){ soundOn = true; master.gain.value = 0.5; document.getElementById('soundBtn').setAttribute('aria-pressed','true'); }
+  if (!sfxOn){ sfxOn = true; if (sfxBus) sfxBus.gain.value = 0.85; document.getElementById('fxBtn').setAttribute('aria-pressed','true'); }
+  SFX.powerUp();
+  /* gesture: camera look, motion + hand */
+  if (!G.on){ try { startGesture(); document.getElementById('gestureBtn').setAttribute('aria-pressed','true'); } catch(e){} }
+  /* ears: continuous listening */
+  if (!V.on){ try { startEars(); } catch(e){} }
+  syncMicBtn();
+  toast('everything on · speak, move your hand', 3000);
+  setMenu(false);
+}
+function powerOff(){
+  poweredOn = false;
+  powerBtn.textContent = '○ OFF';
+  powerBtn.setAttribute('aria-pressed','false');
+  if (V.on){ V.on = false; try{ V.rec && V.rec.stop(); }catch(e){} }
+  if (G.on){ try { stopGesture(); document.getElementById('gestureBtn').setAttribute('aria-pressed','false'); } catch(e){} }
+  soundOn = false; master.gain.value = 0; document.getElementById('soundBtn').setAttribute('aria-pressed','false');
+  setMood('idle');
+  syncMicBtn();
+  toast('everything off', 1800);
+}
+powerBtn.addEventListener('click', () => { poweredOn ? powerOff() : powerOn(); });
+
+/* keep the conversation going: after a reply, listening resumes by itself */
 const menuEl = document.getElementById('menu');
 const menuBtn = document.getElementById('menuBtn');
 function setMenu(open){
