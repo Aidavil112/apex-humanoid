@@ -498,15 +498,24 @@ const server = http.createServer(async (req, res) => {
   /* ---- streaming brain: first words out in ~1s, speak while it writes ---- */
   if (req.url.split('?')[0] === '/chat/stream' && req.method === 'POST') {
     readBody(req, 1e6).then(async body => {
-      let text = '', hist = [];
-      try { const b = JSON.parse(body || '{}'); text = (b.text || '').slice(0, 2000); hist = Array.isArray(b.history) ? b.history.slice(-8) : []; } catch (e) {}
+      let text = '', hist = [], want = '';
+      try {
+        const b = JSON.parse(body || '{}');
+        text = (b.text || '').slice(0, 2000);
+        hist = Array.isArray(b.history) ? b.history.slice(-8) : [];
+        /* only ever a plain model id, never a URL or a prompt */
+        if (typeof b.model === 'string' && /^gemini-[a-z0-9.\-]{2,40}$/.test(b.model)) want = b.model;
+      } catch (e) {}
       res.writeHead(200, { 'content-type': 'text/event-stream', 'cache-control': 'no-store', connection: 'keep-alive' });
       const send = o => res.write('data: ' + JSON.stringify(o) + '\n\n');
       const key = process.env.GEMINI_API_KEY;
       if (!key){ send({ text: localReply(text), done: true }); return res.end(); }
       const history = hist.filter(h => h && h.role && h.text)
         .map(h => ({ role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text).slice(0, 800) }] }));
-      const models = [process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-3.8-flash'].filter(Boolean);
+      const models = [want, process.env.GEMINI_MODEL, 'gemini-3.5-flash-lite',
+                      'gemini-3.1-flash-lite', 'gemini-3.8-flash']
+                     .filter(Boolean)
+                     .filter((m, i, a) => a.indexOf(m) === i);
       let wrote = false;
       for (const model of models){
         try {
