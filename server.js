@@ -65,31 +65,44 @@ async function askOpenAI(text) {
 
 async function askGemini(text) {
   const key = process.env.GEMINI_API_KEY;
-  /* free-tier models, newest first; the first one that answers wins */
-  const models = [process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
-    .filter(Boolean);
+  const BASE = 'https://generativelanguage.googleapis.com/v1beta';
+  /* Model names move fast (2.5-flash was retired 20 Oct 2026). Newest first,
+     then fall back to whatever the key can actually see. */
+  const models = [process.env.GEMINI_MODEL, 'gemini-3.8-flash', 'gemini-3.6-flash',
+                  'gemini-3.5-flash-lite', 'gemini-3.1-flash-lite', 'gemini-flash-latest']
+                 .filter(Boolean);
   let lastErr = 'no model tried';
-  for (const model of models){
-    try {
-      const r = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-        {
-          method: 'POST',
-          headers: { 'content-type': 'application/json' },
-          body: JSON.stringify({
-            contents: [{ parts: [{ text: 'Reply in one or two short spoken sentences, no markdown: ' + text }] }]
-          })
-        }
-      );
-      if (!r.ok) { lastErr = 'gemini ' + model + ' ' + r.status; continue; }
-      const j = await r.json();
-      const out = j.candidates && j.candidates[0] && j.candidates[0].content &&
-                  j.candidates[0].content.parts && j.candidates[0].content.parts[0] &&
-                  j.candidates[0].content.parts[0].text;
-      if (out) return out.trim();
-      lastErr = 'gemini ' + model + ' empty reply';
-    } catch (e) { lastErr = 'gemini ' + model + ' ' + e.message; }
+  const ask = async (model) => {
+    const r = await fetch(`${BASE}/models/${model}:generateContent`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+      body: JSON.stringify({
+        contents: [{ parts: [{ text: 'Reply in one or two short spoken sentences, no markdown: ' + text }] }]
+      })
+    });
+    if (!r.ok) throw new Error(model + ' ' + r.status);
+    const j = await r.json();
+    const out = j.candidates && j.candidates[0] && j.candidates[0].content &&
+                j.candidates[0].content.parts && j.candidates[0].content.parts[0] &&
+                j.candidates[0].content.parts[0].text;
+    if (!out) throw new Error(model + ' empty reply');
+    return out.trim();
+  };
+  for (const m of models){
+    try { return await ask(m); } catch (e){ lastErr = e.message; }
   }
+  /* last resort: ask Google what this key may use, then try the first text model */
+  try {
+    const r = await fetch(`${BASE}/models?pageSize=100`, { headers: { 'x-goog-api-key': key } });
+    const j = await r.json();
+    const cand = (j.models || []).find(m =>
+      (m.supportedGenerationMethods || []).includes('generateContent') &&
+      !/image|tts|audio|embedding|veo|imagen|lyria/i.test(m.name));
+    if (cand){
+      try { return await ask(cand.name.replace(/^models\//, '')); }
+      catch (e){ lastErr = e.message; }
+    }
+  } catch (e){ lastErr += ' | list failed: ' + e.message; }
   throw new Error(lastErr);
 }
 
