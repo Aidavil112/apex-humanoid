@@ -1217,7 +1217,8 @@ applyTheme(0);
    mouth → speechSynthesis, with an amplitude envelope driving the core glow
    Swap any of the three: the seams are askBrain(), speak(), startEars().
    ========================================================================= */
-const V = { rec:null, on:false, env:0, target:0, busy:false, analyser:null, audioEl:null };
+const V = { rec:null, on:false, env:0, target:0, busy:false, analyser:null, audioEl:null,
+            interim:'', earlyT:null, lastSubmit:0, lastText:'' };
 
 /* ---- brain ---- */
 const LOCAL_BRAIN = [
@@ -1560,6 +1561,17 @@ function handleUtterance(text){
     }).catch(() => { V.busy = false; });
     return;
   }
+  /* zero-gap acknowledgement: speak something within ~0 ms while the brain works */
+  const fillerFor = DEVANAGARI.test(text) ? 'हाँ,' : 'Haan,';
+  if (speechSynthesis && !speechSynthesis.speaking && !quickReply(text)) {
+    const f = new SpeechSynthesisUtterance(fillerFor);
+    const v = voiceFor(text); if (v) f.voice = v;
+    f.lang = DEVANAGARI.test(text) ? 'hi-IN' : langMode;
+    f.rate = 1.15; f.pitch = 0.92; f.volume = 1;
+    try { speechSynthesis.speak(f); } catch(e){}
+    V.target = 1.0;
+  }
+
   /* instant path: canned answers need zero milliseconds of thinking */
   const fast = quickReply(text);
   if (fast){
@@ -1603,8 +1615,15 @@ function startEars(){
         const t = e.results[i][0].transcript;
         if (e.results[i].isFinal) finalTxt += t; else interim += t;
       }
-      if (interim) { setMood('listening'); V.target = 0.5; }
-      if (finalTxt){ toast('suna: “' + finalTxt.trim().slice(0, 60) + '”', 2500); handleUtterance(finalTxt.trim()); }
+      if (interim) { setMood('listening'); V.target = 0.5; V.interim = interim; }
+      /* iOS/Chrome can take over a second to hand over the "final" result.
+         If the user has stopped talking (interim text, quiet for 650 ms),
+         submit it now instead of waiting. */
+      if (interim.trim()){
+        clearTimeout(V.earlyT);
+        V.earlyT = setTimeout(() => submitHeard(interim), 900);
+      }
+      if (finalTxt){ clearTimeout(V.earlyT); V.interim = ''; submitHeard(finalTxt); }
     };
     r.onerror = ev => {
       /* iOS: 'aborted' happens on tab switch — just restart, do not alarm the user */
@@ -1619,6 +1638,16 @@ function startEars(){
     setMood('listening');
     toast('listening — speak');
   }catch(e){ simulatedTurn(); }
+}
+/* one place for "we heard something" — de-dupes the early submit and the real one */
+function submitHeard(raw){
+  const text = String(raw || '').trim();
+  if (!text || V.busy) return;
+  const now = Date.now();
+  if (V.lastSubmit && (now - V.lastSubmit < 1200) && text === V.lastText) return;
+  V.lastSubmit = now; V.lastText = text;
+  toast('suna: “' + text.slice(0, 60) + '”', 2200);
+  handleUtterance(text);
 }
 function simulatedTurn(){                     // graceful demo when mic/SR is unavailable
   setMood('listening'); V.target = 0.6;
