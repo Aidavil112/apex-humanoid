@@ -196,6 +196,7 @@
       <button class="ghost" id="askBtn">⌨ ask</button>
       <button class="ghost" id="voiceTestBtn">🔊 test</button>
       <button class="ghost" id="deepBtn" aria-pressed="false">🧠 deep</button>
+      <button class="ghost" id="ytBtn">🎬 youtube</button>
     </div>
     <div class="row">
       <button class="ghost" id="langBtn" aria-pressed="false">अ en</button>
@@ -2239,5 +2240,268 @@ if (location.protocol !== 'file:') setInterval(pollRemote, 1500);
      CONFIG.name / CONFIG.tagline  →  copy
      THEMES[]                      →  accent + core colour pairs
    ========================================================================== */</script>
+
+<script>
+/* ======================================================================
+   YOUTUBE AGENT  —  topic in, finished Short out.  Everything free:
+   script + voice from the server (Gemini), picture from a canvas,
+   recording from MediaRecorder. No upload, no account, no credit card.
+   ====================================================================== */
+(function(){
+  const YT = { open:false, busy:false, plan:null };
+
+  const wrap = document.createElement('div');
+  wrap.id = 'ytModal';
+  wrap.style.cssText = 'position:fixed;inset:0;z-index:9999;display:none;background:#04090eee;' +
+    'backdrop-filter:blur(6px);overflow:auto;padding:18px 14px 40px;' +
+    'font-family:ui-monospace,SFMono-Regular,Menlo,monospace;color:#d8f2ff';
+  wrap.innerHTML = `
+    <div style="max-width:520px;margin:0 auto">
+      <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:14px">
+        <div style="font-size:13px;letter-spacing:.22em;color:#7fd4ff">YOUTUBE AGENT</div>
+        <button id="ytClose" style="background:#0d1a24;color:#9fe8ff;border:1px solid #1d3a4d;
+          border-radius:10px;padding:8px 12px;font:inherit;font-size:12px">✕ close</button>
+      </div>
+      <input id="ytTopic" placeholder="topic likho — e.g. AI se paisa kaise kamaye"
+        style="width:100%;box-sizing:border-box;background:#0a151d;border:1px solid #1d3a4d;
+        border-radius:12px;padding:14px;color:#eaf9ff;font:inherit;font-size:14px;margin-bottom:10px">
+      <div style="display:flex;gap:8px;margin-bottom:12px">
+        <select id="ytLang" style="flex:1;background:#0a151d;border:1px solid #1d3a4d;border-radius:10px;
+          padding:10px;color:#eaf9ff;font:inherit;font-size:13px">
+          <option value="hi">Hindi voice</option>
+          <option value="en">English voice</option>
+        </select>
+        <select id="ytScenes" style="flex:1;background:#0a151d;border:1px solid #1d3a4d;border-radius:10px;
+          padding:10px;color:#eaf9ff;font:inherit;font-size:13px">
+          <option value="5">5 scenes · ~20s</option>
+          <option value="6" selected>6 scenes · ~25s</option>
+          <option value="8">8 scenes · ~30s</option>
+        </select>
+      </div>
+      <button id="ytGo" style="width:100%;background:linear-gradient(90deg,#1a6d8f,#2ea8c9);color:#03181f;
+        border:0;border-radius:12px;padding:14px;font:inherit;font-weight:700;font-size:14px;letter-spacing:.06em">
+        ▸ MAKE THE VIDEO</button>
+      <div id="ytLog" style="margin-top:12px;font-size:12px;line-height:1.7;color:#8fd8f5;white-space:pre-wrap"></div>
+      <canvas id="ytPreview" style="width:100%;border-radius:14px;margin-top:12px;display:none;background:#000"></canvas>
+      <div id="ytOut" style="display:none;margin-top:14px">
+        <a id="ytDL" download style="display:block;text-align:center;background:#0d1a24;border:1px solid #2ea8c9;
+          color:#9fe8ff;border-radius:12px;padding:13px;text-decoration:none;font-size:13px;margin-bottom:8px">
+          ⬇ download video</a>
+        <a id="ytThumb" download style="display:block;text-align:center;background:#0d1a24;border:1px solid #1d3a4d;
+          color:#9fe8ff;border-radius:12px;padding:13px;text-decoration:none;font-size:13px;margin-bottom:8px">
+          ⬇ download thumbnail</a>
+        <div id="ytMeta" style="background:#0a151d;border:1px solid #1d3a4d;border-radius:12px;padding:12px;
+          font-size:12px;white-space:pre-wrap;color:#cfeaff"></div>
+        <button id="ytCopy" style="width:100%;margin-top:8px;background:#0d1a24;color:#9fe8ff;border:1px solid #1d3a4d;
+          border-radius:12px;padding:12px;font:inherit;font-size:12px">copy title + description + tags</button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+
+  const $ = id => document.getElementById(id);
+  const log = m => { const el = $('ytLog'); el.textContent += m + '\n'; el.scrollIntoView({block:'end'}); };
+
+  function openYT(){ wrap.style.display='block'; YT.open = true; }
+  function closeYT(){ wrap.style.display='none'; YT.open = false; if (window.setMenu) setMenu(false); }
+
+  const ytBtn = document.getElementById('ytBtn');
+  if (ytBtn) ytBtn.addEventListener('click', () => { openYT(); if (window.setMenu) setMenu(false); });
+  $('ytClose').addEventListener('click', closeYT);
+
+  /* ---------- picture ---------- */
+  const W = 1080, H = 1920;
+  function drawFrame(cx, scene, t, total, caption, sub){
+    const g = cx.createLinearGradient(0, 0, 0, H);
+    g.addColorStop(0, '#04121b'); g.addColorStop(.55, '#061a26'); g.addColorStop(1, '#020a10');
+    cx.fillStyle = g; cx.fillRect(0, 0, W, H);
+
+    /* halo rings behind the text */
+    const cxr = W/2, cyr = H*0.40;
+    for (let i = 3; i >= 1; i--){
+      cx.beginPath();
+      cx.strokeStyle = 'rgba(70,200,255,' + (0.05 + 0.05*Math.sin(t*2 + i)) + ')';
+      cx.lineWidth = 3;
+      cx.arc(cxr, cyr, 240 + i*70 + 14*Math.sin(t*1.6 + i), 0, Math.PI*2);
+      cx.stroke();
+    }
+    /* particles */
+    for (let i = 0; i < 90; i++){
+      const a = i * 2.399 + t*0.25, r = 120 + (i % 9) * 34;
+      const x = cxr + Math.cos(a) * r, y = cyr + Math.sin(a*1.2) * r*0.72;
+      cx.fillStyle = 'rgba(140,230,255,' + (0.25 + 0.55*Math.abs(Math.sin(t + i))) + ')';
+      cx.beginPath(); cx.arc(x, y, 2.4, 0, Math.PI*2); cx.fill();
+    }
+
+    cx.textAlign = 'center';
+    /* caption */
+    cx.fillStyle = '#eaf9ff';
+    cx.font = '800 86px system-ui,-apple-system,Segoe UI,Roboto,sans-serif';
+    const words = String(caption || '').split(' ');
+    let line = '', y = H*0.62;
+    const lines = [];
+    words.forEach(w => {
+      const test = line ? line + ' ' + w : w;
+      if (cx.measureText(test).width > W*0.84){ lines.push(line); line = w; } else line = test;
+    });
+    if (line) lines.push(line);
+    lines.slice(0, 4).forEach(L => { cx.fillText(L, W/2, y, W*0.86); y += 100; });
+
+    /* subtitle */
+    if (sub){
+      cx.font = '400 40px system-ui,sans-serif';
+      cx.fillStyle = 'rgba(150,225,255,.72)';
+      cx.fillText(String(sub).slice(0, 70), W/2, H*0.86, W*0.84);
+    }
+
+    /* progress */
+    cx.fillStyle = 'rgba(255,255,255,.10)'; cx.fillRect(0, H-12, W, 12);
+    cx.fillStyle = '#2ea8c9'; cx.fillRect(0, H-12, W * Math.min(1, t/Math.max(total,1)), 12);
+
+    /* brand */
+    cx.fillStyle = 'rgba(120,210,240,.55)';
+    cx.font = '700 30px ui-monospace,monospace';
+    cx.textAlign = 'left';
+    cx.fillText('APEX', 48, 86);
+  }
+
+  function makeThumb(plan){
+    const c = document.createElement('canvas'); c.width = 1280; c.height = 720;
+    const cx = c.getContext('2d');
+    const g = cx.createLinearGradient(0, 0, 1280, 720);
+    g.addColorStop(0, '#051622'); g.addColorStop(1, '#0a3040');
+    cx.fillStyle = g; cx.fillRect(0, 0, 1280, 720);
+    for (let i = 0; i < 60; i++){
+      cx.fillStyle = 'rgba(120,220,255,' + (0.12 + 0.5*Math.random()) + ')';
+      cx.beginPath(); cx.arc(Math.random()*1280, Math.random()*720, 2.2, 0, 7); cx.fill();
+    }
+    cx.textAlign = 'center';
+    cx.fillStyle = '#eaf9ff';
+    cx.font = '900 92px system-ui,-apple-system,Roboto,sans-serif';
+    const t = String(plan.thumbnailText || plan.title || 'APEX').toUpperCase();
+    const ws = t.split(' '); let line = '', y = 300, lines = [];
+    ws.forEach(w => { const test = line ? line + ' ' + w : w;
+      if (cx.measureText(test).width > 1120){ lines.push(line); line = w; } else line = test; });
+    if (line) lines.push(line);
+    lines.slice(0, 3).forEach(L => { cx.fillText(L, 640, y, 1140); y += 104; });
+    cx.font = '700 34px ui-monospace,monospace'; cx.fillStyle = 'rgba(140,225,255,.8)';
+    cx.fillText('APEX HUMANoid', 640, 640);
+    return c.toDataURL('image/png');
+  }
+
+  /* ---------- the run ---------- */
+  $('ytGo').addEventListener('click', async () => {
+    if (YT.busy) return;
+    const topic = $('ytTopic').value.trim();
+    if (!topic){ log('pehle topic likho.'); return; }
+    YT.busy = true; $('ytLog').textContent = ''; $('ytOut').style.display = 'none';
+    $('ytGo').textContent = '⏳ working…';
+
+    try {
+      if (!location.protocol.startsWith('http')) throw new Error('ye preview me nahi chalega — live site pe kholo');
+      const lang = $('ytLang').value, n = parseInt($('ytScenes').value, 10);
+
+      log('1/5  script likh raha hoon…');
+      const pr = await fetch('yt/plan', { method:'POST', headers:{'content-type':'application/json'},
+        body: JSON.stringify({ topic, lang, scenes:n }) });
+      const plan = await pr.json();
+      if (!plan.scenes || !plan.scenes.length) throw new Error('script nahi bana');
+      YT.plan = plan;
+      log('     title: ' + plan.title);
+
+      log('2/5  ' + plan.scenes.length + ' scene ki awaaz… (Gemini voice)');
+      const voices = [];
+      for (let i = 0; i < plan.scenes.length; i++){
+        const txt = (plan.scenes[i].narration || plan.scenes[i].caption || '').trim();
+        const vr = await fetch('yt/voice', { method:'POST', headers:{'content-type':'application/json'},
+          body: JSON.stringify({ text: txt.slice(0, 400) }) });
+        if (!vr.ok) throw new Error('voice failed: ' + (await vr.text()).slice(0, 120));
+        voices.push(await vr.arrayBuffer());
+        log('     voice ' + (i+1) + '/' + plan.scenes.length + ' ✓');
+      }
+
+      log('3/5  audio jod raha hoon…');
+      const AC = window.AudioContext || window.webkitAudioContext;
+      const ac = new AC();
+      await ac.resume();
+      const decoded = [];
+      for (const ab of voices) decoded.push(await ac.decodeAudioData(ab.slice(0)));
+
+      const gap = 0.35;
+      let total = 0;
+      const starts = decoded.map((b, i) => { const at = total; total += b.duration + gap; return at; });
+      total += 0.6;
+
+      const dest = ac.createMediaStreamDestination();
+      const master = ac.createGain(); master.gain.value = 1; master.connect(dest);
+
+      const cv = $('ytPreview');
+      cv.style.display = 'block';
+      cv.width = W; cv.height = H;
+      const cx = cv.getContext('2d');
+      drawFrame(cx, null, 0, total, plan.scenes[0].caption, plan.title);
+
+      const stream = cv.captureStream(30);
+      dest.stream.getAudioTracks().forEach(t => stream.addTrack(t));
+      const mime = ['video/webm;codecs=vp9,opus', 'video/webm;codecs=vp8,opus', 'video/webm', 'video/mp4']
+        .find(m => window.MediaRecorder && MediaRecorder.isTypeSupported(m));
+      if (!mime) throw new Error('is browser me recording support nahi hai');
+      const rec = new MediaRecorder(stream, { mimeType: mime, videoBitsPerSecond: 4000000 });
+      const chunks = [];
+      rec.ondataavailable = e => { if (e.data.size) chunks.push(e.data); };
+
+      log('4/5  record kar raha hoon (~' + Math.round(total) + 's)… phone ko chhodo mat');
+      const done = new Promise(r => { rec.onstop = r; });
+      rec.start(1000);
+
+      const t0 = ac.currentTime + 0.15;
+      decoded.forEach((buf, i) => {
+        const src = ac.createBufferSource();
+        src.buffer = buf; src.connect(master); src.start(t0 + starts[i]);
+      });
+
+      await new Promise(resolve => {
+        const started = performance.now();
+        const tick = () => {
+          const t = (performance.now() - started) / 1000;
+          let idx = 0;
+          for (let i = 0; i < starts.length; i++) if (t >= starts[i]) idx = i;
+          if (t >= total){ rec.stop(); resolve(); return; }
+          const sc = plan.scenes[idx] || {};
+          drawFrame(cx, null, t, total, sc.caption, sc.narration);
+          requestAnimationFrame(tick);
+        };
+        requestAnimationFrame(tick);
+      });
+      await done;
+
+      log('5/5  file taiyar…');
+      const blob = new Blob(chunks, { type: mime });
+      const url = URL.createObjectURL(blob);
+      const dl = $('ytDL');
+      dl.href = url;
+      dl.download = (plan.title || 'apex-short').replace(/[^\w\u0900-\u097F -]/g, '').slice(0, 50) + (mime.includes('mp4') ? '.mp4' : '.webm');
+      dl.textContent = '⬇ download video (' + (blob.size/1048576).toFixed(1) + ' MB)';
+      const th = $('ytThumb'); th.href = makeThumb(plan);
+      th.download = 'thumbnail.png';
+      $('ytMeta').textContent =
+        'TITLE\n' + plan.title + '\n\nDESCRIPTION\n' + plan.description +
+        '\n\nTAGS\n' + (plan.tags || []).join(', ') +
+        '\n\nSCENES\n' + plan.scenes.map((s, i) => (i+1) + '. ' + s.caption + ' — ' + s.narration).join('\n');
+      $('ytOut').style.display = 'block';
+      log('ho gaya. video download karo, YouTube app me upload karo.');
+    } catch (e){
+      log('❌ ' + e.message);
+    } finally {
+      YT.busy = false; $('ytGo').textContent = '▸ MAKE THE VIDEO';
+    }
+  });
+
+  $('ytCopy').addEventListener('click', async () => {
+    try { await navigator.clipboard.writeText($('ytMeta').textContent); $('ytCopy').textContent = 'copied ✓';
+      setTimeout(() => $('ytCopy').textContent = 'copy title + description + tags', 1600); } catch (e){}
+  });
+})();
+</script>
+
 </body>
 </html>
