@@ -1313,10 +1313,15 @@ async function askBrain(text){
   /* 'auto' = use this server's /chat (Gemini when GEMINI_API_KEY is set, local rules otherwise) */
   if (CONFIG.brain === 'auto' && location.protocol.startsWith('http')){
     try{
-      const r = await fetch('chat', {
-        method:'POST', headers:{'content-type':'application/json'},
-        body: JSON.stringify({ text, history: CHAT_MEM })
-      });
+      const ctrl = new AbortController();
+      const tid = setTimeout(() => ctrl.abort(), 12000);
+      let r;
+      try {
+        r = await fetch('chat', {
+          method:'POST', headers:{'content-type':'application/json'}, signal: ctrl.signal,
+          body: JSON.stringify({ text, history: CHAT_MEM })
+        });
+      } finally { clearTimeout(tid); }
       const j = await r.json();
       if (j.text){ remember('user', text); remember('model', j.text); return j.text; }
     }catch(e){ /* fall through to local rules */ }
@@ -1481,12 +1486,15 @@ function handleUtterance(text){
     }).catch(() => { V.busy = false; });
     return;
   }
-  setTimeout(async () => {
+  toast('thinking…', 1200);
+  (async () => {
+    const t0 = performance.now();
     const reply = await askBrain(text);
-    toast('“' + reply.slice(0, 90) + '”', 5000);
+    const ms = Math.round(performance.now() - t0);
+    toast('“' + reply.slice(0, 90) + '” · ' + ms + ' ms', 5000);
     speak(reply);
     V.busy = false;
-  }, 420);
+  })();
 }
 function startEars(){
   if (!SR){ simulatedTurn(); return; }
