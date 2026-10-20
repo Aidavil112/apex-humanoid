@@ -63,6 +63,18 @@ async function askOpenAI(text) {
   return j.choices[0].message.content.trim();
 }
 
+/* raw 16-bit PCM from Gemini TTS -> a wav the browser can play */
+function pcmToWav(pcm, rate, channels, bits){
+  const head = Buffer.alloc(44);
+  head.write('RIFF', 0); head.writeUInt32LE(36 + pcm.length, 4); head.write('WAVE', 8);
+  head.write('fmt ', 12); head.writeUInt32LE(16, 16); head.writeUInt16LE(1, 20);
+  head.writeUInt16LE(channels, 22); head.writeUInt32LE(rate, 24);
+  head.writeUInt32LE(rate * channels * bits / 8, 28);
+  head.writeUInt16LE(channels * bits / 8, 32); head.writeUInt16LE(bits, 34);
+  head.write('data', 36); head.writeUInt32LE(pcm.length, 40);
+  return Buffer.concat([head, pcm]);
+}
+
 async function askGemini(text, history) {
   history = Array.isArray(history)
     ? history.filter(h => h && h.role && h.text)
@@ -512,6 +524,93 @@ const server = http.createServer(async (req, res) => {
   if (req.url.split('?')[0] === '/state' && req.method === 'GET') {
     res.writeHead(200, {'content-type':'application/json','cache-control':'no-store'});
     return res.end(JSON.stringify(STATE));
+  }
+
+  /* ---- YouTube agent: script plan + real voice, both free on the Gemini key ---- */
+  if (req.url.split('?')[0] === '/yt/plan' && req.method === 'POST') {
+    readBody(req, 1e5).then(async body => {
+      let p = {}; try { p = JSON.parse(body || '{}'); } catch (e) {}
+      const topic = String(p.topic || '').slice(0, 300);
+      const lang = p.lang === 'hi' ? 'Hindi' : (p.lang === 'en' ? 'English' : 'the same language as the topic');
+      const n = Math.min(Math.max(parseInt(p.scenes, 10) || 6, 4), 10);
+      if (!topic){ res.writeHead(400, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'topic required'})); }
+      const key = process.env.GEMINI_API_KEY;
+      const fallback = {
+        title: topic.slice(0, 70),
+        description: topic + '\n\n#shorts',
+        tags: ['shorts', 'ai'], thumbnailText: topic.split(/\s+/).slice(0, 4).join(' ').toUpperCase(),
+        scenes: Array.from({ length: n }, (_, i) => ({ caption: i ? '' : topic, narration: i ? '' : topic }))
+      };
+      if (!key){ res.writeHead(200, {'content-type':'application/json'}); return res.end(JSON.stringify(fallback)); }
+      const prompt = 'Make a YouTube Shorts plan about: "' + topic + '".\n' +
+        'Return ONLY JSON: {"title":string,"description":string,"tags":string[],"thumbnailText":string,' +
+        '"scenes":[{"caption":string,"narration":string}]}\n' +
+        'Exactly ' + n + ' scenes. caption = at most 7 words, ALL CAPS, shown on screen. ' +
+        'narration = one spoken sentence, at most 18 words, natural ' + lang + '. ' +
+        'narration must never repeat caption word for word. description = 2 short lines + hashtags. tags = 8 lowercase words.';
+      try {
+        const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/gemini-3.1-flash-lite:generateContent', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+          body: JSON.stringify({
+            contents: [{ role: 'user', parts: [{ text: prompt }] }],
+            generationConfig: { maxOutputTokens: 900, temperature: 0.9, responseMimeType: 'application/json' }
+          })
+        });
+        const j = await r.json();
+        const txt = j.candidates && j.candidates[0] && j.candidates[0].content &&
+                    j.candidates[0].content.parts && j.candidates[0].content.parts.map(x => x.text || '').join('');
+        const plan = JSON.parse(txt);
+        if (!plan.scenes || !plan.scenes.length) throw new Error('no scenes');
+        res.writeHead(200, {'content-type':'application/json'});
+        res.end(JSON.stringify(plan));
+      } catch (e) {
+        res.writeHead(200, {'content-type':'application/json'});
+        res.end(JSON.stringify(Object.assign(fallback, { note: 'gemini plan failed: ' + e.message })));
+      }
+    });
+    return;
+  }
+
+  if (req.url.split('?')[0] === '/yt/voice' && req.method === 'POST') {
+    readBody(req, 1e5).then(async body => {
+      let p = {}; try { p = JSON.parse(body || '{}'); } catch (e) {}
+      const text = String(p.text || '').slice(0, 900).trim();
+      const voice = /^[A-Za-z]{3,12}$/.test(p.voice || '') ? p.voice : 'Kore';
+      if (!text){ res.writeHead(400, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'text required'})); }
+      const key = process.env.GEMINI_API_KEY;
+      if (!key){ res.writeHead(503, {'content-type':'application/json'}); return res.end(JSON.stringify({error:'no key'})); }
+      const models = ['gemini-2.5-flash-preview-tts', 'gemini-3.1-flash-tts-preview'];
+      let last = 'no model';
+      for (const m of models){
+        try {
+          const r = await fetch('https://generativelanguage.googleapis.com/v1beta/models/' + m + ':generateContent', {
+            method: 'POST',
+            headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
+            body: JSON.stringify({
+              contents: [{ parts: [{ text }] }],
+              generationConfig: {
+                responseModalities: ['AUDIO'],
+                speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: voice } } }
+              }
+            })
+          });
+          if (!r.ok){ last = m + ' ' + r.status + ' ' + (await r.text()).slice(0, 160); continue; }
+          const j = await r.json();
+          const part = j.candidates && j.candidates[0] && j.candidates[0].content &&
+                       j.candidates[0].content.parts && j.candidates[0].content.parts.find(x => x.inlineData);
+          if (!part){ last = m + ' no audio'; continue; }
+          const pcm = Buffer.from(part.inlineData.data, 'base64');
+          const rate = Number((String(part.inlineData.mimeType).match(/rate=(\d+)/) || [])[1] || 24000);
+          res.writeHead(200, { 'content-type': 'audio/wav', 'cache-control': 'no-store',
+                               'x-model': m, 'x-rate': String(rate) });
+          return res.end(pcmToWav(pcm, rate, 1, 16));
+        } catch (e){ last = m + ' ' + e.message; }
+      }
+      res.writeHead(502, {'content-type':'application/json'});
+      res.end(JSON.stringify({ error: last }));
+    });
+    return;
   }
 
   /* ---- brain diagnostics: which models this key can actually use ---- */
