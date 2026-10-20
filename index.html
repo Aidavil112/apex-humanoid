@@ -1312,6 +1312,23 @@ function remember(role, text){
   CHAT_MEM.push({ role, text: String(text).slice(0, 600) });
   while (CHAT_MEM.length > 8) CHAT_MEM.shift();
 }
+/* ---- instant answers: no network, no thinking, spoken immediately ---- */
+const QUICK = [
+  [/^(hi|hello|hey|namaste|namaskar|hii|helo)\b/i, 'Namaste. Main sun raha hoon.'],
+  [/(naam kya|who are you|tum kon|tum kaun|your name)/i, 'Main Apex Humanoid hoon, aapka apna assistant.'],
+  [/^(time|samay|kitne baje|what time)/i, () => 'Abhi ' + new Date().toLocaleTimeString('en-IN', { hour:'2-digit', minute:'2-digit' }) + ' baje hain.'],
+  [/(theek ho|kaise ho|how are you)/i, 'Main bilkul theek hoon. Aap batao?'],
+  [/(thank|shukriya|dhanyavad)/i, 'Koi baat nahi.'],
+  [/(band ho|sleep|so jao|bye|good night)/i, 'Theek hai. Main yahin hoon jab zarurat ho.'],
+  [/(kya kar sakte|what can you do)/i, 'Main bol sakta hoon, sun sakta hoon, avatar badal sakta hoon, aur printer ka status bata sakta hoon.']
+];
+function quickReply(text){
+  for (const [re, out] of QUICK){
+    if (re.test(text.trim())) return (typeof out === 'function') ? out() : out;
+  }
+  return null;
+}
+
 /* speak a piece without cancelling what is already queued */
 function speakChunk(text){
   if (!('speechSynthesis' in window) || !text.trim()) return;
@@ -1319,8 +1336,7 @@ function speakChunk(text){
   const v = voiceFor(text);
   if (v) u.voice = v;
   u.lang = DEVANAGARI.test(text) ? 'hi-IN' : langMode;
-  u.rate = (langMode === 'hi-IN' ? 0.96 : 1.0);
-  u.pitch = 0.92; u.volume = 1;
+  u.rate = 1.12; u.pitch = 0.92; u.volume = 1;
   u.onboundary = () => { V.target = 1.0; };
   u.onend = () => { V.target = 0.15; };
   speechSynthesis.speak(u);          /* browser queues these in order */
@@ -1544,6 +1560,15 @@ function handleUtterance(text){
     }).catch(() => { V.busy = false; });
     return;
   }
+  /* instant path: canned answers need zero milliseconds of thinking */
+  const fast = quickReply(text);
+  if (fast){
+    toast('“' + fast + '”', 3000);
+    speak(fast);
+    V.busy = false;
+    return;
+  }
+
   (async () => {
     const t0 = performance.now();
     let spoken = false;
