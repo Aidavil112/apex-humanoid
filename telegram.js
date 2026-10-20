@@ -87,6 +87,19 @@ function localTools(text){
 async function think(text){
   const local = localTools(text);
   if (local) return local;
+  /* one brain for the whole app: ask the page server first (/chat knows the
+     current Gemini model names and falls back on its own). */
+  try {
+    const PORT = process.env.PORT || 8787;
+    const r = await fetch('http://127.0.0.1:' + PORT + '/chat', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text })
+    });
+    if (r.ok){
+      const j = await r.json();
+      if (j && j.text) return j.text;
+    }
+  } catch (e) { /* server route not up yet — fall through */ }
   try {
     if (process.env.OPENAI_API_KEY) return await askOpenAI(text);
     if (process.env.GEMINI_API_KEY) return await askGemini(text);
@@ -94,7 +107,7 @@ async function think(text){
     return 'Brain error: ' + e.message + '\n(API key check karo)';
   }
   return 'Abhi koi API key set nahi hai, isliye main sirf basic cheezein kar sakta hoon.\n' +
-         'OPENAI_API_KEY ya GEMINI_API_KEY daal do, phir kuch bhi poochho.';
+         'GEMINI_API_KEY daal do, phir kuch bhi poochho.';
 }
 
 /* ------------------------------- send ----------------------------------- */
