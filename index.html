@@ -195,6 +195,7 @@
       <button class="ghost" id="replayBtn" aria-pressed="false">↺ replay</button>
       <button class="ghost" id="askBtn">⌨ ask</button>
       <button class="ghost" id="voiceTestBtn">🔊 test</button>
+      <button class="ghost" id="deepBtn" aria-pressed="false">🧠 deep</button>
     </div>
     <div class="row">
       <button class="ghost" id="langBtn" aria-pressed="false">अ en</button>
@@ -1350,7 +1351,7 @@ async function askBrainStream(text, onSentence){
   try {
     const r = await fetch('chat/stream', {
       method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctrl.signal,
-      body: JSON.stringify({ text, history: CHAT_MEM })
+      body: JSON.stringify({ text, history: CHAT_MEM, model: deepOn ? DEEP_MODEL : undefined })
     });
     if (!r.ok || !r.body) throw new Error('no stream');
     const reader = r.body.getReader();
@@ -1751,6 +1752,24 @@ document.getElementById('askBtn').addEventListener('click', () => {
   if (q && q.trim()) handleUtterance(q.trim());
   setMenu(false);
 });
+
+/* deep = ask the big model (Gemini 4 Argon / Pro) instead of flash-lite.
+   Slower, but smarter — uses the PRO credits on the AI Studio account. */
+const DEEP_MODEL = 'gemini-4-argon';
+let deepOn = localStorage.getItem('apex.deep') === '1';
+function syncDeepBtn(){
+  const b = document.getElementById('deepBtn');
+  if (!b) return;
+  b.setAttribute('aria-pressed', String(deepOn));
+  b.textContent = deepOn ? '🧠 deep ·on' : '🧠 deep';
+}
+document.getElementById('deepBtn').addEventListener('click', () => {
+  deepOn = !deepOn;
+  localStorage.setItem('apex.deep', deepOn ? '1' : '0');
+  syncDeepBtn();
+  toast(deepOn ? 'deep mode — bada model, thoda slow' : 'deep mode off — fast model', 2500);
+});
+syncDeepBtn();
 
 /* speak immediately inside the tap = always allowed on iOS */
 document.getElementById('voiceTestBtn').addEventListener('click', () => {
