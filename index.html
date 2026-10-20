@@ -1309,6 +1309,61 @@ function remember(role, text){
   CHAT_MEM.push({ role, text: String(text).slice(0, 600) });
   while (CHAT_MEM.length > 8) CHAT_MEM.shift();
 }
+/* speak a piece without cancelling what is already queued */
+function speakChunk(text){
+  if (!('speechSynthesis' in window) || !text.trim()) return;
+  const u = new SpeechSynthesisUtterance(text.trim());
+  const v = voiceFor(text);
+  if (v) u.voice = v;
+  u.lang = DEVANAGARI.test(text) ? 'hi-IN' : langMode;
+  u.rate = (langMode === 'hi-IN' ? 0.96 : 1.0);
+  u.pitch = 0.92; u.volume = 1;
+  u.onboundary = () => { V.target = 1.0; };
+  u.onend = () => { V.target = 0.15; };
+  speechSynthesis.speak(u);          /* browser queues these in order */
+}
+
+/* stream the answer: speak the first sentence while the rest is still writing */
+async function askBrainStream(text, onSentence){
+  const ctrl = new AbortController();
+  const tid = setTimeout(() => ctrl.abort(), 20000);
+  try {
+    const r = await fetch('chat/stream', {
+      method: 'POST', headers: { 'content-type': 'application/json' }, signal: ctrl.signal,
+      body: JSON.stringify({ text, history: CHAT_MEM })
+    });
+    if (!r.ok || !r.body) throw new Error('no stream');
+    const reader = r.body.getReader();
+    const dec = new TextDecoder();
+    let buf = '', sent = '', full = '';
+    while (true){
+      const { value, done } = await reader.read();
+      if (done) break;
+      buf += dec.decode(value, { stream: true });
+      const lines = buf.split('\n');
+      buf = lines.pop();
+      for (const line of lines){
+        if (!line.startsWith('data:')) continue;
+        try {
+          const j = JSON.parse(line.slice(5).trim());
+          if (j.text){
+            full += j.text; sent += j.text;
+            /* flush complete sentences as soon as they exist */
+            let m;
+            while ((m = sent.match(/^([\s\S]*?[.!?।\n])\s*/))){
+              onSentence(m[1].trim());
+              sent = sent.slice(m[0].length);
+            }
+          }
+        } catch (e) {}
+      }
+    }
+    if (sent.trim()) onSentence(sent.trim());
+    if (full.trim()){ remember('user', text); remember('model', full); }
+    return full.trim();
+  } finally { clearTimeout(tid); }
+}
+
 async function askBrain(text){
   /* 'auto' = use this server's /chat (Gemini when GEMINI_API_KEY is set, local rules otherwise) */
   if (CONFIG.brain === 'auto' && location.protocol.startsWith('http')){
@@ -1486,14 +1541,26 @@ function handleUtterance(text){
     }).catch(() => { V.busy = false; });
     return;
   }
-  toast('thinking…', 1200);
   (async () => {
     const t0 = performance.now();
-    const reply = await askBrain(text);
-    const ms = Math.round(performance.now() - t0);
-    toast('“' + reply.slice(0, 90) + '” · ' + ms + ' ms', 5000);
-    speak(reply);
+    let spoken = false;
+    try {
+      const full = await askBrainStream(text, chunk => {
+        if (!spoken){ spoken = true; setMood('speaking'); toast('bol raha hoon…', 1200); }
+        speakChunk(chunk);
+      });
+      const ms = Math.round(performance.now() - t0);
+      if (!full) throw new Error('empty');
+      toast('“' + full.slice(0, 90) + '” · ' + ms + ' ms', 5000);
+      /* if nothing was queued (no speech engine), fall back to plain speech */
+      if (!spoken) speak(full);
+    } catch (e){
+      const reply = await askBrain(text);
+      toast('“' + reply.slice(0, 90) + '”', 5000);
+      speak(reply);
+    }
     V.busy = false;
+    if (poweredOn && !V.on) setTimeout(() => { try { startEars(); } catch(err){} }, 900);
   })();
 }
 function startEars(){
