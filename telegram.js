@@ -80,7 +80,7 @@ function localTools(text){
   if (/who are you|kaun ho|tum kaun/.test(t))
     return 'Main humanoid ka Telegram channel hoon — phone se tumhara message, server pe mera dimaag.';
   if (/help|madad|kya kar sakta/.test(t))
-    return 'Commands:\n/start — hello\n/status — bot ki halat\n/voice on|off — voice reply\n/help — ye list\n\nBaaki kuch bhi likho, brain se jawab milega (key hone par).';
+    return 'Commands:\n/start — hello\n/status — bot ki halat\n/voice on|off — voice reply\n/script <topic> — YouTube ka pura content package\n/avatar astra · /say namaste · /mood thinking\n/printer · /print <file> · /stopprinter\n/help — ye list\n\nBaaki kuch bhi likho, brain se jawab milega.';
   return null;
 }
 
@@ -212,6 +212,29 @@ async function handleUpdate(u){
     if (!mAv[1]) return send(chat_id, 'Avatars: nova, astra, unit7, kaze, vega, pip\nUse: /avatar kaze');
     return send(chat_id, '◈ ' + mAv[1] + '  ' + await toPage({ avatar: mAv[1].toLowerCase() }));
   }
+  /* ---- content system: /script <topic> -> hooks + timed script + caption ---- */
+  const mScript = text.match(/^\/script\\s+([\\s\\S]+)/i);
+  if (mScript){
+    const topic = mScript[1].trim().slice(0, 200);
+    await send(chat_id, '📝 likh raha hoon: ' + topic);
+    try {
+      const r = await fetch('http://127.0.0.1:' + PORT + '/content/plan', {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ topic, lang: 'hi' })
+      });
+      const j = await r.json();
+      if (j.error) return send(chat_id, '❌ ' + j.error);
+      const out =
+        '🎬 TITLE TEXT\\n' + (j.thumbnailText || '') +
+        '\\n\\n🪝 HOOKS\\n' + (j.hooks || []).map((h, i) => (i + 1) + '. ' + h).join('\\n') +
+        '\\n\\n🎙 SCRIPT\\n' + (j.script || []).map(x => x.t + 's — ' + x.line).join('\\n') +
+        '\\n\\n📄 CAPTION\\n' + (j.caption || '') +
+        '\\n\\n#️⃣ ' + (j.hashtags || []).map(h => '#' + h).join(' ') +
+        '\\n\\n⏰ ' + (j.bestTime || '');
+      return send(chat_id, out);
+    } catch (e){ return send(chat_id, '❌ ' + e.message); }
+  }
+
   /* ---- printer ---- */
   async function toPrinter(pathname, body){
     try {
