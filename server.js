@@ -417,14 +417,20 @@ const server = http.createServer(async (req, res) => {
 });
 
 /* ---- Telegram channel rides along in the same free service ---- */
-if (process.env.TELEGRAM_BOT_TOKEN) {
+const TG_TOKEN = process.env.TELEGRAM_BOT_TOKEN || process.env.TELEGRAM_TOKEN || process.env.TG_TOKEN || '';
+if (TG_TOKEN && /^\d{6,}:[A-Za-z0-9_-]{30,}$/.test(TG_TOKEN.trim())) {
   try {
     const { spawn } = require('child_process');
     const child = spawn(process.execPath, [path.join(ROOT, 'telegram.js')],
-      { env: Object.assign({}, process.env, { PORT: String(PORT) }), stdio: 'inherit' });
-    child.on('exit', c => console.log('telegram bot exited', c));
+      { env: Object.assign({}, process.env, { TELEGRAM_BOT_TOKEN: TG_TOKEN.trim(), PORT: String(PORT) }), stdio: 'inherit' });
+    child.on('exit', c => console.log('telegram bot exited with code', c));
     console.log('telegram bot: started');
   } catch (e) { console.log('telegram bot failed:', e.message); }
+} else {
+  console.log('telegram bot: skipped — TELEGRAM_BOT_TOKEN ' +
+    (TG_TOKEN ? 'is set but the value does not look like a bot token (len ' + TG_TOKEN.trim().length + ')' : 'is not set'));
+  console.log('  env keys I can see: ' + Object.keys(process.env)
+    .filter(k => /TELE|TG_|BOT/i.test(k)).join(', ') || '  (no telegram-ish keys at all)');
 }
 
 server.listen(PORT, '0.0.0.0', () => {
