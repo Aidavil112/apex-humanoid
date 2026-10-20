@@ -236,8 +236,17 @@ async function printerCall(pathname, method, body){
   return json || { raw: txt.slice(0, 200) };
 }
 
+/* demo state so the whole path can be seen before any hardware exists */
+const DEMO = { file: 'benchy.gcode', started: Date.now() };
+function demoStatus(){
+  const mins = (Date.now() - DEMO.started) / 60000;
+  const pct = Math.min(97, Math.round(6 + mins * 4));
+  return { configured: false, demo: true, state: 'Printing (demo)', file: DEMO.file,
+           progress: pct, timeLeft: Math.max(1, Math.round(24 - mins)) + ' min',
+           hint: 'ye nakli printer hai. Asli ke liye OCTOPRINT_URL set karo.' };
+}
 async function printerStatus(){
-  if (!PRINTER_URL) return { configured: false, hint: 'Render > Environment > OCTOPRINT_URL = http://your-printer-ip' };
+  if (!PRINTER_URL) return demoStatus();
   if (PRINTER_KIND === 'moonraker'){
     const j = await printerCall('/printer/objects/query?print_stats&virtual_sdcard', 'GET');
     const st = (j.result && j.result.status) || {};
@@ -256,7 +265,12 @@ async function printerStatus(){
 }
 
 async function printerStart(file){
-  if (!PRINTER_URL) throw Object.assign(new Error('no printer configured (set OCTOPRINT_URL)'), { code: 501 });
+  if (!PRINTER_URL){
+    if (!file) throw Object.assign(new Error('file name required, e.g. benchy.gcode'), { code: 400 });
+    DEMO.file = file; DEMO.started = Date.now();
+    console.log('printer demo: start', file);
+    return 'demo: started ' + file + ' (no real printer configured)';
+  }
   if (!file) throw Object.assign(new Error('file name required, e.g. benchy.gcode'), { code: 400 });
   if (PRINTER_KIND === 'moonraker'){
     await printerCall('/printer/print/start?filename=' + encodeURIComponent(file), 'POST');
@@ -267,7 +281,7 @@ async function printerStart(file){
 }
 
 async function printerStop(){
-  if (!PRINTER_URL) throw Object.assign(new Error('no printer configured (set OCTOPRINT_URL)'), { code: 501 });
+  if (!PRINTER_URL){ DEMO.started = Date.now() - 9999999; console.log('printer demo: stop'); return 'demo: cancelled'; }
   if (PRINTER_KIND === 'moonraker'){ await printerCall('/printer/print/cancel', 'POST'); return 'cancelled'; }
   await printerCall('/api/job', 'POST', { command: 'cancel' });
   return 'cancelled';
