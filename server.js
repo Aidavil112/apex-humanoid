@@ -63,7 +63,11 @@ async function askOpenAI(text) {
   return j.choices[0].message.content.trim();
 }
 
-async function askGemini(text) {
+async function askGemini(text, history) {
+  history = Array.isArray(history)
+    ? history.filter(h => h && h.role && h.text)
+             .map(h => ({ role: h.role === 'model' ? 'model' : 'user', parts: [{ text: String(h.text).slice(0, 800) }] }))
+    : [];
   const key = process.env.GEMINI_API_KEY;
   const BASE = 'https://generativelanguage.googleapis.com/v1beta';
   /* Model names move fast (2.5-flash was retired 20 Oct 2026). Newest first,
@@ -77,7 +81,8 @@ async function askGemini(text) {
       method: 'POST',
       headers: { 'content-type': 'application/json', 'x-goog-api-key': key },
       body: JSON.stringify({
-        contents: [{ parts: [{ text: 'Reply in one or two short spoken sentences, no markdown: ' + text }] }]
+        contents: history.concat([{ role: 'user', parts: [{ text }] }]),
+        systemInstruction: { parts: [{ text: 'You are the voice behind a small glowing particle humanoid. Reply in one or two short spoken sentences. No markdown. Match the language the user speaks (Hindi or English).' }] }
       })
     });
     if (!r.ok) throw new Error(model + ' ' + r.status);
@@ -515,11 +520,12 @@ const server = http.createServer(async (req, res) => {
     req.on('data', c => { body += c; if (body.length > 1e6) req.destroy(); });
     req.on('end', async () => {
       let text = '';
-      try { text = (JSON.parse(body || '{}').text || '').slice(0, 2000); } catch (e) {}
+      let hist = [];
+      try { const b = JSON.parse(body || '{}'); text = (b.text || '').slice(0, 2000); hist = Array.isArray(b.history) ? b.history.slice(-8) : []; } catch (e) {}
       let reply;
       try {
         if (process.env.OPENAI_API_KEY) reply = await askOpenAI(text);
-        else if (process.env.GEMINI_API_KEY) reply = await askGemini(text);
+        else if (process.env.GEMINI_API_KEY) reply = await askGemini(text, hist);
         else reply = localReply(text);
       } catch (e) {
         reply = localReply(text) + ' (model call failed: ' + e.message + ')';
@@ -593,6 +599,18 @@ if (TG_TOKEN) {
     (TG_TOKEN ? 'is set but the value does not look like a bot token (len ' + TG_TOKEN.trim().length + ')' : 'is not set'));
   console.log('  env keys I can see: ' + Object.keys(process.env)
     .filter(k => /TELE|TG_|BOT/i.test(k)).join(', ') || '  (no telegram-ish keys at all)');
+}
+
+/* ---- keep-alive: Render hands us our public URL, so ping ourselves every 10 min.
+   Stops the free instance spinning down, which keeps the Telegram bot and the
+   08:00 / 23:00 schedule alive. Disable with KEEPALIVE=off. ---- */
+const SELF_URL = process.env.RENDER_EXTERNAL_URL || process.env.SELF_URL || '';
+if (SELF_URL && String(process.env.KEEPALIVE || 'on').toLowerCase() !== 'off'){
+  const pingUrl = SELF_URL.replace(/\/+$/, '') + '/health';
+  setInterval(() => {
+    fetch(pingUrl).then(r => console.log('keepalive', r.status)).catch(e => console.log('keepalive failed', e.message));
+  }, 10 * 60 * 1000);
+  console.log('keepalive: every 10 min ->', pingUrl);
 }
 
 server.listen(PORT, '0.0.0.0', () => {
