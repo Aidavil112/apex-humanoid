@@ -190,6 +190,8 @@
       <button class="ghost" id="charBtn">◈ nova</button>
       <button class="ghost" id="photoBtn">◉ face</button>
       <button class="ghost" id="replayBtn" aria-pressed="false">↺ replay</button>
+      <button class="ghost" id="askBtn">⌨ ask</button>
+      <button class="ghost" id="voiceTestBtn">🔊 test</button>
     </div>
     <div class="row">
       <button class="ghost" id="langBtn" aria-pressed="false">अ en</button>
@@ -1160,6 +1162,11 @@ document.getElementById('enterBtn').addEventListener('click', () => {
   gate.classList.add('out');
   started = true;
   ensureCtx();
+  try {   /* iOS: one utterance inside a gesture unlocks later speech */
+    const primes = new SpeechSynthesisUtterance(' ');
+    primes.volume = 0.01; primes.rate = 2;
+    speechSynthesis.speak(primes);
+  } catch(e){}
   if (soundOn) master.gain.value = 0.5;
   SFX.assemble();
   setTimeout(()=>gate.remove(), 1000);
@@ -1420,7 +1427,15 @@ async function speak(text){
   };
   u.onerror = () => { setMood('idle'); };
   speechSynthesis.cancel();
+  try { speechSynthesis.resume(); } catch(e){}
   speechSynthesis.speak(u);
+  /* watchdog: iOS silently mutes speechSynthesis when the ring/silent switch is off */
+  setTimeout(() => {
+    if (!speechSynthesis.speaking && !speechSynthesis.pending){
+      toast('voice blocked — iPhone ka silent switch off karo, ya menu se 🔊 test dabao', 6000);
+      setMood('idle');
+    }
+  }, 1400);
 }
 
 /* ---- real audio path: analyser drives the glow honestly ---- */
@@ -1486,7 +1501,7 @@ function startEars(){
         if (e.results[i].isFinal) finalTxt += t; else interim += t;
       }
       if (interim) { setMood('listening'); V.target = 0.5; }
-      if (finalTxt) handleUtterance(finalTxt.trim());
+      if (finalTxt){ toast('suna: “' + finalTxt.trim().slice(0, 60) + '”', 2500); handleUtterance(finalTxt.trim()); }
     };
     r.onerror = ev => {
       /* iOS: 'aborted' happens on tab switch — just restart, do not alarm the user */
@@ -1596,6 +1611,30 @@ function powerOff(){
   toast('everything off', 1800);
 }
 powerBtn.addEventListener('click', () => { poweredOn ? powerOff() : powerOn(); });
+
+/* typed question — proves brain + voice even when the mic refuses */
+document.getElementById('askBtn').addEventListener('click', () => {
+  ensureCtx();
+  const q = prompt('Type your question (Hindi or English):');
+  if (q && q.trim()) handleUtterance(q.trim());
+  setMenu(false);
+});
+
+/* speak immediately inside the tap = always allowed on iOS */
+document.getElementById('voiceTestBtn').addEventListener('click', () => {
+  ensureCtx();
+  if (!('speechSynthesis' in window)){ toast('this browser has no speech synthesis', 3000); return; }
+  const line = 'Hello. Main aapka humanoid hoon. Awaaz aa rahi hai?';
+  const u = new SpeechSynthesisUtterance(line);
+  const v = voiceFor(line);
+  if (v) u.voice = v;
+  u.lang = v && v.lang ? v.lang : 'en-IN';
+  u.rate = 0.95; u.volume = 1;
+  speechSynthesis.cancel(); try { speechSynthesis.resume(); } catch(e){}
+  speechSynthesis.speak(u);
+  toast('voice test — awaaz aani chahiye', 3000);
+  setMenu(false);
+});
 
 /* keep the conversation going: after a reply, listening resumes by itself */
 const menuEl = document.getElementById('menu');
