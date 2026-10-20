@@ -65,20 +65,32 @@ async function askOpenAI(text) {
 
 async function askGemini(text) {
   const key = process.env.GEMINI_API_KEY;
-  const model = process.env.GEMINI_MODEL || 'gemini-2.0-flash';
-  const r = await fetch(
-    `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
-    {
-      method: 'POST',
-      headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: 'Reply in one or two short spoken sentences, no markdown: ' + text }] }]
-      })
-    }
-  );
-  if (!r.ok) throw new Error('gemini ' + r.status);
-  const j = await r.json();
-  return j.candidates[0].content.parts[0].text.trim();
+  /* free-tier models, newest first; the first one that answers wins */
+  const models = [process.env.GEMINI_MODEL, 'gemini-2.5-flash', 'gemini-2.0-flash', 'gemini-1.5-flash']
+    .filter(Boolean);
+  let lastErr = 'no model tried';
+  for (const model of models){
+    try {
+      const r = await fetch(
+        `https://generativelanguage.googleapis.com/v1beta/models/${model}:generateContent?key=${key}`,
+        {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({
+            contents: [{ parts: [{ text: 'Reply in one or two short spoken sentences, no markdown: ' + text }] }]
+          })
+        }
+      );
+      if (!r.ok) { lastErr = 'gemini ' + model + ' ' + r.status; continue; }
+      const j = await r.json();
+      const out = j.candidates && j.candidates[0] && j.candidates[0].content &&
+                  j.candidates[0].content.parts && j.candidates[0].content.parts[0] &&
+                  j.candidates[0].content.parts[0].text;
+      if (out) return out.trim();
+      lastErr = 'gemini ' + model + ' empty reply';
+    } catch (e) { lastErr = 'gemini ' + model + ' ' + e.message; }
+  }
+  throw new Error(lastErr);
 }
 
 /* ---------------------------- ElevenLabs TTS ---------------------------- */
